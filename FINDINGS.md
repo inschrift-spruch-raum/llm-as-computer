@@ -357,9 +357,45 @@ Re-running all three stages with 5K training samples (5× original) and 200 max 
 
 Stage 2 achieves **50/50 perfect traces** — the model perfectly executes all PUSH/POP/DUP programs. The remaining errors in Stage 3 are concentrated on ADD, where the model must retrieve two stack values and compute their sum.
 
+### ADD Error Analysis: The Two-Operand Retrieval Problem
+
+With the Phase 6b Stage 3 model (85% val acc, 39/50 perfect), errors are concentrated almost entirely on ADD:
+
+| Opcode | OP err | ARG err | SP err | TOP err | Pattern |
+|--------|--------|---------|--------|---------|---------|
+| PUSH | 0% | 0% | 0.2% | 0% | Perfect |
+| POP | 0% | 0% | 0% | 1.9% | Near-perfect |
+| DUP | 0% | 0% | 0% | 6.6% | Mostly works |
+| **ADD** | 0% | 0% | 0% | **56.2%** | **Fails on TOP** |
+| HALT | 0% | 0% | 0% | 14.5% | Cascading from ADD |
+
+Controlled experiments reveal the precise failure mode:
+
+| Program pattern | Perfect | Interpretation |
+|----------------|---------|----------------|
+| PUSH a, DUP, ADD (= 2a) | **97%** | One lookup + double: works |
+| PUSH a, PUSH a, ADD (= 2a) | 57% | Same values but two lookups: worse |
+| PUSH a, PUSH b, ADD (a≠b) | **3%** | Two different lookups: fails |
+| PUSH a, PUSH 0, ADD (= a) | 0% | Identity: fails |
+| PUSH a, PUSH b, ADD (small) | 0% | Even small values fail |
+| Chained ADDs | 0% | Compound failure |
+
+**The model cannot simultaneously retrieve two different values from the stack.** When a = b, it gets lucky because only one value needs to be looked up. DUP+ADD works at 97% because DUP explicitly copies the value, making both operands visible to the same attention head.
+
+For a ≠ b, the model collapses to predicting a small set of "favorite" sums (34, 24, 16, 48...) — roughly the mean of the training distribution. It has learned that ADD produces a number, and approximately how big, but not which specific number.
+
+**Root cause:** ADD requires reading stack[SP-1] and stack[SP-2] simultaneously. With 4 attention heads, the model likely uses 1 for opcode recall, 1 for SP tracking, and has only 1-2 remaining for stack reads. Two independent position-dependent lookups with the same head would require factoring the query space — possible in theory but a very hard optimization target at d=64.
+
 ### Key Insight: Copy Before Compute
 
-The fundamental bottleneck in learning execution is not opcode dispatch or state tracking — it's **content-addressable memory lookup**. The model must learn to attend back to specific positions in the input and copy their values. This is exactly the parabolic indexing operation from Phases 1-2, but discovered via gradient descent rather than hand-wired. Once the copy mechanism converges (Experiment A), everything else follows.
+The fundamental bottleneck in learning execution is not opcode dispatch or state tracking — it's **content-addressable memory lookup**. The model must learn to attend back to specific positions in the input and copy their values. This is exactly the parabolic indexing operation from Phases 1-2, but discovered via gradient descent rather than hand-wired.
+
+The bottleneck progression:
+1. **Single-value copy** (PUSH → TOP): Solved with 5K data / 200 epochs
+2. **Single-value retrieval + transform** (DUP+ADD = 2a): Works at 97%
+3. **Two-value retrieval + combine** (a+b): Fails at 3% — the current frontier
+
+This maps precisely to Phase 4's prediction: the hand-wired attention executor needs **6 heads minimum** (IP fetch, ARG fetch, stack read ×2, SP track, opcode recall), but the model has only 4. Two simultaneous stack reads require either more heads or a second layer that can condition on the first layer's retrieval.
 
 ---
 
