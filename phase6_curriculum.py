@@ -38,7 +38,7 @@ from phase4_stack_machine import (
 )
 from phase5_training import (
     MicroTransformer, TraceDataset,
-    encode_token, decode_token, encode_trace,
+    encode_token, decode_token,
     evaluate_execution,
     VOCAB_SIZE, PAD_TOKEN, MAX_VAL
 )
@@ -174,7 +174,7 @@ def train_stage(
     lr: float = 3e-4,
     batch_size: int = 64,
     patience: int = 20,
-    max_wall_time: float = 170.0,  # stop before 200s container limit
+    max_wall_time: float = 500.0,  # stop before 600s bash tool limit
     checkpoint_dir: str = ".",
     resume: bool = True,
     verbose: bool = True

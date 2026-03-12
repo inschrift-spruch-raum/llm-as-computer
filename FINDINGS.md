@@ -270,6 +270,160 @@ All traces match token-for-token between reference and attention executors.
 | 4 | Do the primitives compose? | Yes | FF routing is the bottleneck, not attention |
 | 5 | Can gradient descent learn execution? | Partially | Learns structure (56%), not perfect arithmetic |
 
+---
+
+## Phase 6: Curriculum Learning
+
+**Result: YES — curriculum learning significantly improves execution accuracy. 81% token accuracy (vs 56% baseline), 23/50 perfect traces (vs 0/50).**
+
+### Hypothesis
+Phase 5's gap exists because the model must simultaneously learn state tracking AND arithmetic. Decompose via curriculum: teach trivial routing first, then incrementally add complexity.
+
+### Three stages
+
+| Stage | Instructions | Target | Val Acc | Perfect | Final OK |
+|-------|-------------|--------|---------|---------|----------|
+| 1 | PUSH + HALT | >95% | 57% | 0/50 | 1/50 |
+| 2 | PUSH + POP + DUP + HALT | >85% | 67% | 6/50 | 9/50 |
+| 3 | Full set (+ ADD) | >70% | **81%** | **23/50** | **35/50** |
+
+### Comparison with Phase 5 baseline
+
+| Metric | Phase 5 | Phase 6 Stage 3 | Delta |
+|--------|---------|-----------------|-------|
+| Val token accuracy | 56% | 81% | **+25pp** |
+| Perfect traces | 0/50 | 23/50 | **+23** |
+| Final value correct | 5/50 | 35/50 | **+30** |
+
+### Key findings
+
+1. **Curriculum learning works.** The +25pp accuracy gain and 0→23 perfect traces is a qualitative breakthrough. The same 137K-param model that couldn't produce a single correct trace now executes complete programs correctly nearly half the time.
+
+2. **Transfer learning compounds.** Each stage builds meaningfully on the previous. Stage 2 starts where Stage 1 left off and immediately benefits from the learned token structure. Stage 3 starts at 67% and climbs to 81%.
+
+3. **Stage 1 underperformed (57% vs 95% target).** Even PUSH-only programs — the simplest possible routing — require non-trivial position-dependent value copying. The model must learn that TOP = the most recent PUSH argument, and SP = step count. This is harder than expected because the numeric values are arbitrary (0-50), so the FF layer can't just memorize — it must learn a general copy mechanism.
+
+4. **Stage 3 met its target.** Despite Stage 1 and 2 missing their targets, Stage 3 exceeded 70%. The curriculum provides a better optimization landscape even when individual stages don't reach ceiling performance.
+
+5. **Total training time: ~147s on CPU.** All three stages completed comfortably within compute limits. The 137K model trains at ~1s/epoch.
+
+### Interpretation
+
+The Phase 5 finding was "the model learns structure but not arithmetic." Phase 6 shows this was partly a learning-order problem, not just a capacity problem. By staging instruction complexity, the FF layers learn crisp routing for simple cases first, then refine for harder cases.
+
+However, 81% token accuracy and 23/50 perfect traces means the model still makes errors — particularly on longer programs and ADD operations where two stack values must be retrieved and summed. The remaining gap likely requires either more parameters or more training data.
+
+### Stage 1 Diagnostic: The Copy Bottleneck
+
+Error decomposition on the Stage 1 model revealed the model's failure is entirely about **value copying**, not structure:
+
+| Field | Teacher-forced accuracy | What it requires |
+|-------|------------------------|------------------|
+| OP (opcode) | 99.9% | Constant (always PUSH) — trivial |
+| SP (stack ptr) | 98.4% | Increment counter — trivial |
+| ARG (push value) | 21.2% | Copy value from program prefix — **hard** |
+| TOP (stack top) | 4.4% | Copy most recent push value — **hard** |
+
+The model collapses to predicting ~16 "favorite" values (32, 0, 3, 19...) instead of the 50 distinct values in the data. It predicts ARG == TOP only 20% of the time despite this being a hard invariant. **The FF layers learn position but not content-addressable lookup.**
+
+Three ablations identified the bottleneck as **convergence, not capacity**:
+
+| Experiment | Val Acc | ARG acc | TOP acc | Perfect | Change |
+|-----------|---------|---------|---------|---------|--------|
+| Baseline (1K data, 60 ep, d=64) | 57% | 21% | 4% | 0/50 | — |
+| A: 5K data, 200 epochs | **85%** | **100%** | **100%** | **50/50** | More data wins |
+| B: Small values (0-10) | 82% | 77% | 99% | 18/50 | Fewer values helps |
+| C: Wider model (d=128) | 84% | 95% | 98% | 34/50 | More capacity helps |
+
+**Experiment A is decisive:** the same 137K-param model achieves 100% ARG and TOP accuracy with sufficient data and training time. The copy mechanism IS learnable — the original Stage 1 was simply data-starved.
+
+### Phase 6b: Full Curriculum with 5K Samples
+
+Re-running all three stages with 5K training samples (5× original) and 200 max epochs:
+
+| Stage | Instructions | Val Acc | Perfect | Final OK |
+|-------|-------------|---------|---------|----------|
+| 1 | PUSH + HALT | 85% | 49/50 | 50/50 |
+| 2 | PUSH + POP + DUP + HALT | 86% | **50/50** | **50/50** |
+| 3 | Full set (+ ADD) | **85%** | **39/50** | **44/50** |
+
+**Progression across all runs:**
+
+| Run | Val Acc | Perfect | Final OK |
+|-----|---------|---------|----------|
+| Phase 5 baseline | 56% | 0/50 | 5/50 |
+| Phase 6a (1K data) | 81% | 23/50 | 35/50 |
+| Phase 6b (5K data) | **85%** | **39/50** | **44/50** |
+
+Stage 2 achieves **50/50 perfect traces** — the model perfectly executes all PUSH/POP/DUP programs. The remaining errors in Stage 3 are concentrated on ADD, where the model must retrieve two stack values and compute their sum.
+
+### ADD Error Analysis: The Two-Operand Retrieval Problem
+
+With the Phase 6b Stage 3 model (85% val acc, 39/50 perfect), errors are concentrated almost entirely on ADD:
+
+| Opcode | OP err | ARG err | SP err | TOP err | Pattern |
+|--------|--------|---------|--------|---------|---------|
+| PUSH | 0% | 0% | 0.2% | 0% | Perfect |
+| POP | 0% | 0% | 0% | 1.9% | Near-perfect |
+| DUP | 0% | 0% | 0% | 6.6% | Mostly works |
+| **ADD** | 0% | 0% | 0% | **56.2%** | **Fails on TOP** |
+| HALT | 0% | 0% | 0% | 14.5% | Cascading from ADD |
+
+Controlled experiments reveal the precise failure mode:
+
+| Program pattern | Perfect | Interpretation |
+|----------------|---------|----------------|
+| PUSH a, DUP, ADD (= 2a) | **97%** | One lookup + double: works |
+| PUSH a, PUSH a, ADD (= 2a) | 57% | Same values but two lookups: worse |
+| PUSH a, PUSH b, ADD (a≠b) | **3%** | Two different lookups: fails |
+| PUSH a, PUSH 0, ADD (= a) | 0% | Identity: fails |
+| PUSH a, PUSH b, ADD (small) | 0% | Even small values fail |
+| Chained ADDs | 0% | Compound failure |
+
+**The model cannot simultaneously retrieve two different values from the stack.** When a = b, it gets lucky because only one value needs to be looked up. DUP+ADD works at 97% because DUP explicitly copies the value, making both operands visible to the same attention head.
+
+For a ≠ b, the model collapses to predicting a small set of "favorite" sums (34, 24, 16, 48...) — roughly the mean of the training distribution. It has learned that ADD produces a number, and approximately how big, but not which specific number.
+
+**Root cause:** ADD requires reading stack[SP-1] and stack[SP-2] simultaneously. With 4 attention heads, the model likely uses 1 for opcode recall, 1 for SP tracking, and has only 1-2 remaining for stack reads. Two independent position-dependent lookups with the same head would require factoring the query space — possible in theory but a very hard optimization target at d=64.
+
+### Key Insight: Copy Before Compute
+
+The fundamental bottleneck in learning execution is not opcode dispatch or state tracking — it's **content-addressable memory lookup**. The model must learn to attend back to specific positions in the input and copy their values. This is exactly the parabolic indexing operation from Phases 1-2, but discovered via gradient descent rather than hand-wired.
+
+The bottleneck progression:
+1. **Single-value copy** (PUSH → TOP): Solved with 5K data / 200 epochs
+2. **Single-value retrieval + transform** (DUP+ADD = 2a): Works at 97%
+3. **Two-value retrieval + combine** (a+b): Fails at 3% — the current frontier
+
+This maps precisely to Phase 4's prediction: the hand-wired attention executor needs **6 heads minimum** (IP fetch, ARG fetch, stack read ×2, SP track, opcode recall), but the model has only 4. Two simultaneous stack reads require either more heads or a second layer that can condition on the first layer's retrieval.
+
+### Head Count Experiment
+
+Testing whether more heads fix the two-operand problem:
+
+| Config | Params | S3 Acc | S3 Perfect | ADD a+b (a≠b) |
+|--------|--------|--------|------------|---------------|
+| d=64, h=4 (baseline) | 140K | 85.1% | 39/50 | **3%** |
+| d=64, h=8 | 140K | 85.2% | 44/50 | **3%** |
+
+Doubling the heads from 4→8 at d=64 **does not help ADD a+b at all**. The per-head dimension drops from 16→8, likely negating any benefit from extra heads. The model ceiling at ~85% val accuracy appears to be an architectural limit at this scale — more heads, same total capacity, same result.
+
+**Implication:** The ADD problem isn't just "not enough heads." It requires either (a) significantly more capacity per head (larger d_model), (b) more layers so layer 1 retrieves operands and layer 2 computes, or (c) an architectural change that makes two simultaneous position-dependent reads easier (e.g., explicit stack-pointer-relative addressing in the positional encoding).
+
+---
+
+## Updated Summary: All Phases
+
+| Phase | Question | Answer | Key Constraint |
+|-------|----------|--------|----------------|
+| 1 | Does hull query scale O(log t)? | Yes | Ternary search required, not hull scan |
+| 2 | Does parabolic indexing work? | Yes | float32 limit ~4K indices (revised down) |
+| 2b | Can we extend the address limit? | Yes | Residual addressing: 25M from 2 heads |
+| 3 | Is cumsum via attention stable? | Yes | 100K+ steps in float32 |
+| 4 | Do the primitives compose? | Yes | FF routing is the bottleneck, not attention |
+| 5 | Can gradient descent learn execution? | Partially | Learns structure (56%), not perfect arithmetic |
+| 6 | Does curriculum learning help? | **Yes** | 56%→85% accuracy, 0→39 perfect traces |
+
 ## Key Insight Across All Phases
 
 The consistent finding: **attention is the easy part; feed-forward routing is the hard part.** The 2D convex hull attention primitives (parabolic indexing, cumsum) are elegant and compose cleanly. But the conditional logic that maps opcodes to different computations — the "if PUSH then route arg to stack; if ADD then read two values and sum" — is where model capacity actually goes. This is true both in the hand-wired design (Phase 4) and in training (Phase 5).
@@ -283,4 +437,5 @@ Percepta's d_model=36, n_heads=18, n_layers=7 architecture is probably 80% FF ro
 - phase3_cumsum.py — Cumulative sum tests
 - phase4_stack_machine.py — Stack machine composition test
 - phase5_training.py — Training experiments
+- phase6_curriculum.py — Curriculum learning experiment
 - viz/phase1-results.jsx — Phase 1 visualization (React)
