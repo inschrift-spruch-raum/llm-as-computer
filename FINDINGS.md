@@ -397,6 +397,19 @@ The bottleneck progression:
 
 This maps precisely to Phase 4's prediction: the hand-wired attention executor needs **6 heads minimum** (IP fetch, ARG fetch, stack read ×2, SP track, opcode recall), but the model has only 4. Two simultaneous stack reads require either more heads or a second layer that can condition on the first layer's retrieval.
 
+### Head Count Experiment
+
+Testing whether more heads fix the two-operand problem:
+
+| Config | Params | S3 Acc | S3 Perfect | ADD a+b (a≠b) |
+|--------|--------|--------|------------|---------------|
+| d=64, h=4 (baseline) | 140K | 85.1% | 39/50 | **3%** |
+| d=64, h=8 | 140K | 85.2% | 44/50 | **3%** |
+
+Doubling the heads from 4→8 at d=64 **does not help ADD a+b at all**. The per-head dimension drops from 16→8, likely negating any benefit from extra heads. The model ceiling at ~85% val accuracy appears to be an architectural limit at this scale — more heads, same total capacity, same result.
+
+**Implication:** The ADD problem isn't just "not enough heads." It requires either (a) significantly more capacity per head (larger d_model), (b) more layers so layer 1 retrieves operands and layer 2 computes, or (c) an architectural change that makes two simultaneous position-dependent reads easier (e.g., explicit stack-pointer-relative addressing in the positional encoding).
+
 ---
 
 ## Updated Summary: All Phases
