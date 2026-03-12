@@ -22,19 +22,20 @@ They released no code or weights. This repo independently tests whether the core
 | 2b | Extended addressing | ✅ Done | Residual (bit-split) addressing: 25M range from 2 heads. |
 | 3 | Cumulative sum via attention | ✅ Done | Rock-solid — zero integer errors at 100K in float32. |
 | 4 | Hand-wired stack machine | ✅ Done | Primitives compose. 10/10 test programs execute correctly via attention only. |
-| 5 | Trained micro-executor | 🔲 Todo | Can gradient descent discover the optimal attention structure? |
+| 5 | Trained micro-executor | ✅ Done | Learns execution structure (56% token acc, 112× chance) but not perfect arithmetic. Width > depth. |
 | 6 | WASM fragment execution | 🔲 Stretch | Fibonacci inside a transformer. |
 
 ## Files
 
 ```
 RD-PLAN.md                  # Full R&D plan (6 phases)
-FINDINGS.md                 # Combined findings from Phases 1-4, 2b
+FINDINGS.md                 # Combined findings from Phases 1-5
 phase1_hull_cache.py        # Convex hull vs brute force benchmarks
 phase2_parabolic.py         # Parabolic encoding precision tests
 phase2b_address_limits.py   # Extended addressing exploration
 phase3_cumsum.py            # Cumulative sum stability tests
 phase4_stack_machine.py     # Stack machine via attention primitives
+phase5_training.py          # Training experiments (3 model configs)
 viz/phase1-results.jsx      # Phase 1 interactive visualization (React)
 ```
 
@@ -45,6 +46,7 @@ python3 phase1_hull_cache.py       # ~60s, benchmarks query scaling
 python3 phase2_parabolic.py        # ~10s, finds float32 breakpoint
 python3 phase3_cumsum.py           # ~10s, tests numerical drift
 python3 phase4_stack_machine.py    # ~1s, stack machine composition test
+python3 phase5_training.py         # ~5min+ CPU, trains 3 model configs
 ```
 
 Requires: numpy, scipy (for convex hull verification only — the fast path uses ternary search).
@@ -57,3 +59,4 @@ Requires: numpy, scipy (for convex hull verification only — the fast path uses
 - **"Convex hull" is slightly misleading.** The speed comes from exploiting unimodal structure via binary/ternary search, not from hull size. For parabolic keys, all points lie on the hull.
 - **The primitives compose.** Phase 4 proves that parabolic indexing, recency bias, and sequential state tracking work together as a stack machine executor — same memory primitive addresses both program memory and stack memory without interference.
 - **The FF layer is the real challenge.** Attention heads have clean roles; the opcode-dependent routing in the feed-forward network is where model capacity actually goes.
+- **Training confirms the theory.** A 137K-param model learns execution *structure* (56% token accuracy) but not perfect *arithmetic*. Width matters more than depth — consistent with FF routing being the bottleneck. The model learns WHEN to push/pop/add but fumbles exact numeric computation.

@@ -208,11 +208,73 @@ All traces match token-for-token between reference and attention executors.
 | 3 | Is cumsum via attention stable? | Yes | 100K+ steps in float32 |
 | 4 | Do the primitives compose? | Yes | FF routing is the bottleneck, not attention |
 
-## Next: Phase 5 (Train a Micro-Executor)
-- Generate (program, trace) dataset for the stack instruction set
-- Train a d_model=36 transformer from scratch on next-token prediction
-- Key question: does gradient descent discover the parabolic encoding?
-- If it discovers a DIFFERENT structure that also works, that's more interesting than confirmation
+---
+
+## Phase 5: Trained Micro-Executor
+
+**Result: The model learns significant execution structure (56% token accuracy, 112× above chance) but does not reach perfect trace execution at this scale.**
+
+### Setup
+- Training: 1000 random programs, max 8 instructions, push values 0-30
+- Validation: 150 programs, same distribution
+- Test: 50 in-distribution + 30 out-of-distribution (longer programs)
+- Vocabulary: 210 tokens (opcodes + special + numeric 0-200)
+- Training: next-token prediction on execution traces (cross-entropy)
+
+### Architecture comparison (25 epochs, 300 samples — all unconverged)
+
+| Model | d_model | heads | layers | Params | Val Acc |
+|-------|---------|-------|--------|--------|---------|
+| minimal | 32 | 4 | 2 | 44K | 30% |
+| deep | 32 | 4 | 4 | 69K | 35% |
+| wide | 64 | 4 | 2 | 137K | 40% |
+
+**Width > depth.** This confirms Phase 4's prediction: attention heads have clean roles but FF routing for opcode-dependent logic needs capacity *per layer*, not more layers.
+
+### Best model (wide, 100 epochs, 1000 samples)
+
+| Metric | Value |
+|--------|-------|
+| Val token accuracy | 56% (chance = ~0.5%) |
+| Perfect traces | 0/50 |
+| Final value correct | 5/50 (10%) |
+| Training plateau | ~epoch 80 |
+
+### Interpretation
+
+1. **The model LEARNS execution patterns.** 56% token accuracy is 112× above chance. It correctly predicts opcodes and many state values.
+
+2. **The gap is arithmetic, not structure.** The model learns WHEN to push, pop, add — but fumbles the exact numeric computations (SP deltas after ADD, TOP values after multi-step operations). It has learned the *grammar* of execution but not the *arithmetic*.
+
+3. **One error cascades.** Even 56% token accuracy → 0% perfect traces. In autoregressive generation, one wrong SP or TOP value corrupts all subsequent steps.
+
+4. **Width > depth confirms Phase 4's FF routing prediction.** The attention heads (instruction fetch, stack read, SP track) are mechanically simple. The FF layer must implement conditional logic (opcode → different computation), and that requires capacity within each layer, not more layers of simple computation.
+
+5. **To reach perfection likely needs:** 10K+ training samples, 500K+ params, possibly curriculum learning (start with PUSH/HALT only, add ADD, then full instruction set).
+
+### Limitations
+- Container CPU timeout (200s) prevented training >50 epochs with 2000+ samples
+- Bigger model (128/8/3, 670K params) was too slow to evaluate in this environment
+- Full convergence study requires GPU access or persistent compute
+
+---
+
+## Updated Summary: All Phases
+
+| Phase | Question | Answer | Key Constraint |
+|-------|----------|--------|----------------|
+| 1 | Does hull query scale O(log t)? | Yes | Ternary search required, not hull scan |
+| 2 | Does parabolic indexing work? | Yes | float32 limit ~4K indices (revised down) |
+| 2b | Can we extend the address limit? | Yes | Residual addressing: 25M from 2 heads |
+| 3 | Is cumsum via attention stable? | Yes | 100K+ steps in float32 |
+| 4 | Do the primitives compose? | Yes | FF routing is the bottleneck, not attention |
+| 5 | Can gradient descent learn execution? | Partially | Learns structure (56%), not perfect arithmetic |
+
+## Key Insight Across All Phases
+
+The consistent finding: **attention is the easy part; feed-forward routing is the hard part.** The 2D convex hull attention primitives (parabolic indexing, cumsum) are elegant and compose cleanly. But the conditional logic that maps opcodes to different computations — the "if PUSH then route arg to stack; if ADD then read two values and sum" — is where model capacity actually goes. This is true both in the hand-wired design (Phase 4) and in training (Phase 5).
+
+Percepta's d_model=36, n_heads=18, n_layers=7 architecture is probably 80% FF routing capacity and 20% attention lookup mechanics.
 
 ## Files
 - phase1_hull_cache.py — Hull cache benchmarks
@@ -220,4 +282,5 @@ All traces match token-for-token between reference and attention executors.
 - phase2b_address_limits.py — Extended addressing exploration
 - phase3_cumsum.py — Cumulative sum tests
 - phase4_stack_machine.py — Stack machine composition test
+- phase5_training.py — Training experiments
 - viz/phase1-results.jsx — Phase 1 visualization (React)
