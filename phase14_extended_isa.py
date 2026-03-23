@@ -1,29 +1,47 @@
 """
-Phase 14: Extended ISA — Chunk 1: Arithmetic Operations
+Phase 14: Extended ISA — Chunks 1+2: Arithmetic & Comparison Operations
 
-Adds 5 arithmetic opcodes to the compiled transformer's ISA:
+Chunk 1 (Issue #11): 5 arithmetic opcodes:
   MUL   (13)  — a b → (a*b)
   DIV_S (14)  — a b → (b/a) signed, truncate toward zero. Trap if a==0.
   DIV_U (15)  — a b → (b/a) unsigned (same as DIV_S for positive ints)
   REM_S (16)  — a b → (b%a) signed, sign matches dividend
   REM_U (17)  — a b → (b%a) unsigned (same as REM_S for positive ints)
 
+Chunk 2 (Issue #12): 11 comparison opcodes (all push 1=true or 0=false):
+  EQZ   (18)  — a → (a==0 ? 1 : 0)       unary, sd=0
+  EQ    (19)  — a b → (a==b ? 1 : 0)      sd=-1
+  NE    (20)  — a b → (a≠b ? 1 : 0)       sd=-1
+  LT_S  (21)  — a b → (b<a ? 1 : 0)       sd=-1, signed
+  LT_U  (22)  — a b → (b<a ? 1 : 0)       sd=-1, unsigned (=LT_S for now)
+  GT_S  (23)  — a b → (b>a ? 1 : 0)       sd=-1, signed
+  GT_U  (24)  — a b → (b>a ? 1 : 0)       sd=-1, unsigned (=GT_S for now)
+  LE_S  (25)  — a b → (b≤a ? 1 : 0)       sd=-1, signed
+  LE_U  (26)  — a b → (b≤a ? 1 : 0)       sd=-1, unsigned (=LE_S for now)
+  GE_S  (27)  — a b → (b≥a ? 1 : 0)       sd=-1, signed
+  GE_U  (28)  — a b → (b≥a ? 1 : 0)       sd=-1, unsigned (=GE_S for now)
+
 Division by zero triggers OP_TRAP (99): executor appends a TraceStep with
 op=OP_TRAP and breaks. The runner prints "TRAP: division by zero" instead
 of a result.
 
-Architecture note: MUL/DIV/REM are the first NONLINEAR opcodes. ADD/SUB
-could be expressed as linear combinations of [arg, val_a, val_b, val_c]
-via M_top. MUL (val_a * val_b) cannot. The FF dispatch now has both:
+Architecture note: MUL/DIV/REM and all comparison ops are NONLINEAR.
+ADD/SUB can be expressed as linear combinations via M_top. MUL (val_a *
+val_b) and comparisons (conditional 0/1) cannot. The FF dispatch has:
   - M_top: linear routing matrix (handles PUSH through ROT)
-  - Nonlinear override: explicit computation for MUL/DIV/REM
+  - Nonlinear override: explicit computation for arithmetic + comparisons
 This is actually more faithful to real transformer FF layers (which have
 nonlinear activations) than the pure-linear M_top was.
 
-No new attention heads needed — all ops pop two values from existing stack
-reads and push one result via the same mechanism ADD/SUB use.
+D_MODEL=36 constraint: comparison ops share embedding dims for S/U pairs
+(DIM_IS_LT covers both LT_S and LT_U, etc.) since _U variants currently
+behave identically to _S.
 
-Part of Issue #8 (Tier 1 ISA expansion). Chunk 1 of N (Issue #11).
+No new attention heads needed — all ops use the existing stack read/write
+mechanism.
+
+Part of Issue #8 (Tier 1 ISA expansion).
+  Chunk 1: Issue #11 (closed). Chunk 2: Issue #12.
 """
 
 import numpy as np
@@ -76,6 +94,17 @@ OP_DIV_S = 14
 OP_DIV_U = 15
 OP_REM_S = 16
 OP_REM_U = 17
+OP_EQZ   = 18
+OP_EQ    = 19
+OP_NE    = 20
+OP_LT_S  = 21
+OP_LT_U  = 22
+OP_GT_S  = 23
+OP_GT_U  = 24
+OP_LE_S  = 25
+OP_LE_U  = 26
+OP_GE_S  = 27
+OP_GE_U  = 28
 OP_TRAP  = 99  # Division by zero exit condition
 
 OP_NAMES_P14 = {
@@ -85,16 +114,36 @@ OP_NAMES_P14 = {
     OP_DIV_U: "DIV_U",
     OP_REM_S: "REM_S",
     OP_REM_U: "REM_U",
+    OP_EQZ:   "EQZ",
+    OP_EQ:    "EQ",
+    OP_NE:    "NE",
+    OP_LT_S:  "LT_S",
+    OP_LT_U:  "LT_U",
+    OP_GT_S:  "GT_S",
+    OP_GT_U:  "GT_U",
+    OP_LE_S:  "LE_S",
+    OP_LE_U:  "LE_U",
+    OP_GE_S:  "GE_S",
+    OP_GE_U:  "GE_U",
     OP_TRAP:  "TRAP",
 }
 
 # One-hot dimension assignments (continuing from Phase 13: SWAP=21, OVER=22, ROT=23)
+# Chunk 1: arithmetic
 DIM_IS_MUL   = 24
 DIM_IS_DIV_S = 25
 DIM_IS_DIV_U = 26
 DIM_IS_REM_S = 27
 DIM_IS_REM_U = 28
-# D_MODEL = 36, so dims 24-28 are within range
+
+# Chunk 2: comparisons — S/U pairs share dims (D_MODEL=36, dims 29-35 available)
+DIM_IS_EQZ   = 29
+DIM_IS_EQ    = 30
+DIM_IS_NE    = 31
+DIM_IS_LT    = 32  # shared by LT_S and LT_U
+DIM_IS_GT    = 33  # shared by GT_S and GT_U
+DIM_IS_LE    = 34  # shared by LE_S and LE_U
+DIM_IS_GE    = 35  # shared by GE_S and GE_U
 
 OPCODE_DIM_MAP = {
     **OPCODE_DIM_MAP_P13,
@@ -103,6 +152,17 @@ OPCODE_DIM_MAP = {
     OP_DIV_U: DIM_IS_DIV_U,
     OP_REM_S: DIM_IS_REM_S,
     OP_REM_U: DIM_IS_REM_U,
+    OP_EQZ:   DIM_IS_EQZ,
+    OP_EQ:    DIM_IS_EQ,
+    OP_NE:    DIM_IS_NE,
+    OP_LT_S:  DIM_IS_LT,
+    OP_LT_U:  DIM_IS_LT,
+    OP_GT_S:  DIM_IS_GT,
+    OP_GT_U:  DIM_IS_GT,
+    OP_LE_S:  DIM_IS_LE,
+    OP_LE_U:  DIM_IS_LE,
+    OP_GE_S:  DIM_IS_GE,
+    OP_GE_U:  DIM_IS_GE,
 }
 
 OPCODE_IDX = {
@@ -112,12 +172,26 @@ OPCODE_IDX = {
     OP_DIV_U: 14,
     OP_REM_S: 15,
     OP_REM_U: 16,
+    OP_EQZ:   17,
+    OP_EQ:    18,
+    OP_NE:    19,
+    OP_LT_S:  20,
+    OP_LT_U:  21,
+    OP_GT_S:  22,
+    OP_GT_U:  23,
+    OP_LE_S:  24,
+    OP_LE_U:  25,
+    OP_GE_S:  26,
+    OP_GE_U:  27,
 }
 
-N_OPCODES = 17  # 12 from Phase 13 + 5 new
+N_OPCODES = 28  # 12 from Phase 13 + 5 arithmetic + 11 comparison
 
 # Which opcodes are nonlinear (can't be expressed via M_top linear routing)
-NONLINEAR_OPS = {OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U}
+NONLINEAR_OPS = {OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U,
+                 OP_EQZ, OP_EQ, OP_NE,
+                 OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
+                 OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U}
 
 
 # ─── Signed division/remainder (truncate toward zero) ─────────────
@@ -280,6 +354,32 @@ class Phase14Executor(Phase13Executor):
                 stack_write(sp, result)
                 top = result
 
+            # ── Phase 14 Chunk 2: comparison ops ──
+            elif op == OP_EQZ:
+                val_a = stack_read(sp)
+                result = 1 if val_a == 0 else 0
+                stack_write(sp, result)  # sd=0, replaces top
+                top = result
+            elif op in (OP_EQ, OP_NE, OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
+                        OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U):
+                val_a = stack_read(sp)
+                val_b = stack_read(sp - 1)
+                if op in (OP_EQ,):
+                    result = 1 if val_a == val_b else 0
+                elif op in (OP_NE,):
+                    result = 1 if val_a != val_b else 0
+                elif op in (OP_LT_S, OP_LT_U):
+                    result = 1 if val_b < val_a else 0
+                elif op in (OP_GT_S, OP_GT_U):
+                    result = 1 if val_b > val_a else 0
+                elif op in (OP_LE_S, OP_LE_U):
+                    result = 1 if val_b <= val_a else 0
+                elif op in (OP_GE_S, OP_GE_U):
+                    result = 1 if val_b >= val_a else 0
+                sp -= 1
+                stack_write(sp, result)
+                top = result
+
             # ── Control flow ──
             elif op == OP_JZ:
                 cond = stack_read(sp)
@@ -312,12 +412,15 @@ class Phase14Executor(Phase13Executor):
 # ─── PyTorch Model ────────────────────────────────────────────────
 
 class Phase14Model(Phase13Model):
-    """Compiled transformer with Phase 14 arithmetic ops.
+    """Compiled transformer with Phase 14 arithmetic + comparison ops.
 
     Extends Phase 13's FF dispatch with nonlinear computation for
-    MUL, DIV_S, DIV_U, REM_S, REM_U. These can't be expressed as
-    linear routing via M_top (MUL = val_a * val_b, not a linear
-    combination of [arg, val_a, val_b, val_c]).
+    MUL, DIV_S, DIV_U, REM_S, REM_U (arithmetic) and
+    EQZ, EQ, NE, LT/GT/LE/GE_S/U (comparisons).
+
+    These can't be expressed as linear routing via M_top:
+      MUL = val_a * val_b (product, not linear combination)
+      EQ = 1 if val_a == val_b else 0 (conditional, not linear)
 
     Architecture: M_top handles linear ops (PUSH through ROT).
     Nonlinear ops have M_top rows set to zero; their results come
@@ -337,7 +440,7 @@ class Phase14Model(Phase13Model):
         self.head_stack_b  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1, use_bias_q=True)
         self.head_stack_c  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1, use_bias_q=True)
 
-        # FF dispatch: 17 opcodes, 4 value inputs
+        # FF dispatch: 28 opcodes, 4 value inputs
         self.register_buffer('M_top', torch.zeros(N_OPCODES, 4, dtype=DTYPE))
         self.register_buffer('sp_deltas', torch.zeros(N_OPCODES, dtype=DTYPE))
 
@@ -446,13 +549,15 @@ class Phase14Model(Phase13Model):
             self.M_top[11] = torch.tensor([ 0.,  0.,  0.,  1.])  # ROT:  top = vc
 
             # Nonlinear ops: M_top rows stay zero — results computed in forward()
-            # self.M_top[12..16] = 0  (MUL, DIV_S, DIV_U, REM_S, REM_U)
+            # self.M_top[12..27] = 0  (MUL, DIV_S, DIV_U, REM_S, REM_U, EQZ..GE_U)
 
             # SP deltas:
-            # PUSH POP  ADD  DUP HALT SUB  JZ  JNZ NOP SWAP OVER ROT  MUL DIVS DIVU REMS REMU
+            # Idx: PUSH POP  ADD  DUP HALT SUB  JZ  JNZ NOP SWAP OVER ROT
+            #      MUL DIVS DIVU REMS REMU EQZ  EQ   NE LTS LTU GTS GTU LES LEU GES GEU
             self.sp_deltas.copy_(torch.tensor(
                 [1., -1., -1., 1., 0., -1., -1., -1., 0., 0., 1., 0.,
-                 -1., -1., -1., -1., -1.]))
+                 -1., -1., -1., -1., -1.,
+                 0.,  -1., -1., -1., -1., -1., -1., -1., -1., -1., -1.]))
 
     def forward(self, query_emb, prog_embs, stack_embs):
         """Execute one step.
@@ -508,7 +613,7 @@ class Phase14Model(Phase13Model):
         candidates = self.M_top @ values  # (N_OPCODES,)
         top_linear = (opcode_one_hot * candidates).sum()
 
-        # FF Dispatch — nonlinear path (Phase 14 arithmetic)
+        # FF Dispatch — nonlinear path (Phase 14 arithmetic + comparisons)
         va = round(val_a.item())
         vb = round(val_b.item())
 
@@ -520,6 +625,19 @@ class Phase14Model(Phase13Model):
             nonlinear[OPCODE_IDX[OP_REM_S]] = float(_trunc_rem(vb, va))
             nonlinear[OPCODE_IDX[OP_REM_U]] = float(_trunc_rem(vb, va))
         # else: zeros — executor handles the trap, model just returns 0
+
+        # Comparison ops: produce 1.0 (true) or 0.0 (false)
+        nonlinear[OPCODE_IDX[OP_EQZ]]  = 1.0 if va == 0 else 0.0
+        nonlinear[OPCODE_IDX[OP_EQ]]   = 1.0 if va == vb else 0.0
+        nonlinear[OPCODE_IDX[OP_NE]]   = 1.0 if va != vb else 0.0
+        nonlinear[OPCODE_IDX[OP_LT_S]] = 1.0 if vb < va else 0.0
+        nonlinear[OPCODE_IDX[OP_LT_U]] = 1.0 if vb < va else 0.0
+        nonlinear[OPCODE_IDX[OP_GT_S]] = 1.0 if vb > va else 0.0
+        nonlinear[OPCODE_IDX[OP_GT_U]] = 1.0 if vb > va else 0.0
+        nonlinear[OPCODE_IDX[OP_LE_S]] = 1.0 if vb <= va else 0.0
+        nonlinear[OPCODE_IDX[OP_LE_U]] = 1.0 if vb <= va else 0.0
+        nonlinear[OPCODE_IDX[OP_GE_S]] = 1.0 if vb >= va else 0.0
+        nonlinear[OPCODE_IDX[OP_GE_U]] = 1.0 if vb >= va else 0.0
 
         top_nonlinear = (opcode_one_hot * nonlinear).sum()
         top = top_linear + top_nonlinear
@@ -587,8 +705,16 @@ class Phase14PyTorchExecutor:
                         embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode in (OP_ADD, OP_SUB, OP_MUL, OP_DIV_S, OP_DIV_U,
-                                OP_REM_S, OP_REM_U):
+                                OP_REM_S, OP_REM_U,
+                                OP_EQ, OP_NE,
+                                OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
+                                OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U):
                     # All binary ops: pop two, push one at new_sp
+                    stack_embs_list.append(
+                        embed_stack_entry(new_sp, top, write_count))
+                    write_count += 1
+                elif opcode == OP_EQZ:
+                    # Unary: sd=0, replaces top at same sp
                     stack_embs_list.append(
                         embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
@@ -770,6 +896,150 @@ def make_gcd(a, b):
         Instruction(OP_HALT),         # 11
     ]
     return prog, math.gcd(a, b)
+
+
+# ─── Comparison Program Generators ───────────────────────────────
+
+def make_compare_eqz(a):
+    """Test a == 0 using EQZ. Returns (program, expected_result)."""
+    return [
+        Instruction(OP_PUSH, a),
+        Instruction(OP_EQZ),
+        Instruction(OP_HALT),
+    ], 1 if a == 0 else 0
+
+
+def make_compare_binary(op, a, b):
+    """Generic binary comparison: PUSH a, PUSH b, OP, HALT.
+
+    Note: stack has a at sp-1, b at sp. The comparison semantics are
+    b <op> a per the ISA spec (val_b <op> val_a).
+    Wait — the spec says a b → (a==b) for EQ, but for LT_S it says
+    a b → (b<a). Let's be careful:
+      stack after PUSH a, PUSH b: sp points to b (top), sp-1 points to a.
+      val_a = stack[sp] = b, val_b = stack[sp-1] = a.
+      So for LT_S: result = (val_b < val_a) = (a < b).
+
+    Returns (program, expected_result).
+    """
+    CMP_SEMANTICS = {
+        OP_EQ:   lambda va, vb: vb == va,   # a == b → val_b==val_a
+        OP_NE:   lambda va, vb: vb != va,
+        OP_LT_S: lambda va, vb: vb < va,    # a < b → val_b < val_a
+        OP_LT_U: lambda va, vb: vb < va,
+        OP_GT_S: lambda va, vb: vb > va,
+        OP_GT_U: lambda va, vb: vb > va,
+        OP_LE_S: lambda va, vb: vb <= va,
+        OP_LE_U: lambda va, vb: vb <= va,
+        OP_GE_S: lambda va, vb: vb >= va,
+        OP_GE_U: lambda va, vb: vb >= va,
+    }
+    # val_a = stack[sp] = b (second pushed), val_b = stack[sp-1] = a (first pushed)
+    expected = 1 if CMP_SEMANTICS[op](b, a) else 0
+    return [
+        Instruction(OP_PUSH, a),
+        Instruction(OP_PUSH, b),
+        Instruction(op),
+        Instruction(OP_HALT),
+    ], expected
+
+
+def make_native_max(a, b):
+    """Compute max(a, b) using GT_S + JZ.
+
+    If a > b: result = a. Else: result = b.
+    Stack approach: push both, compare, branch.
+    """
+    expected = max(a, b)
+    prog = [
+        Instruction(OP_PUSH, a),      # 0
+        Instruction(OP_PUSH, b),      # 1
+        # Compare: is a > b?
+        # Stack: [a, b]. val_a=b, val_b=a. GT_S → (val_b > val_a) → (a > b)
+        Instruction(OP_GT_S),         # 2: [a>b ? 1 : 0]  ... wait, GT_S pops both
+        # After GT_S: sp decreased by 1, result on stack. But we lost a and b!
+        # Need to keep copies. Let me restructure.
+    ]
+    # Better approach: use DUP/OVER to keep copies
+    prog = [
+        Instruction(OP_PUSH, a),      # 0: [a]
+        Instruction(OP_PUSH, b),      # 1: [a, b]
+        Instruction(OP_OVER),         # 2: [a, b, a]
+        Instruction(OP_OVER),         # 3: [a, b, a, b]
+        # Stack top: val_a=b, val_b=a. GT_S: (a > b)?
+        Instruction(OP_GT_S),         # 4: [a, b, (a>b)]
+        Instruction(OP_JZ, 9),        # 5: if NOT(a>b) → b is max
+        # a > b: drop b, keep a
+        Instruction(OP_POP),          # 6: [a]
+        Instruction(OP_HALT),         # 7
+        Instruction(OP_NOP),          # 8: padding
+        # b >= a: drop a (it's under b), keep b
+        Instruction(OP_SWAP),         # 9: [b, a]
+        Instruction(OP_POP),          # 10: [b]
+        Instruction(OP_HALT),         # 11
+    ]
+    return prog, expected
+
+
+def make_native_abs(n):
+    """Compute abs(n) using LT_S comparison + conditional negate.
+
+    For now, only works with values expressible in our ISA.
+    Uses: if n < 0 then 0 - n else n.
+    """
+    expected = abs(n)
+    prog = [
+        Instruction(OP_PUSH, n),      # 0: [n]
+        Instruction(OP_DUP),          # 1: [n, n]
+        Instruction(OP_PUSH, 0),      # 2: [n, n, 0]
+        # val_a=0, val_b=n. LT_S: (val_b < val_a) = (n < 0)?
+        Instruction(OP_LT_S),        # 3: [n, (n<0)]
+        Instruction(OP_JZ, 9),        # 4: if n >= 0 → already positive
+        # n < 0: negate (0 - n)
+        Instruction(OP_PUSH, 0),      # 5: [n, 0]
+        Instruction(OP_SWAP),         # 6: [0, n]
+        Instruction(OP_SUB),          # 7: [0-n] = [-n] = abs(n)
+        Instruction(OP_HALT),         # 8
+        # n >= 0: already the answer
+        Instruction(OP_HALT),         # 9
+    ]
+    return prog, expected
+
+
+def make_native_clamp(val, lo, hi):
+    """Clamp val to [lo, hi] using comparisons.
+
+    if val < lo: result = lo
+    elif val > hi: result = hi
+    else: result = val
+    """
+    expected = max(lo, min(val, hi))
+    prog = [
+        Instruction(OP_PUSH, val),    # 0: [val]
+        # Check val < lo
+        Instruction(OP_DUP),          # 1: [val, val]
+        Instruction(OP_PUSH, lo),     # 2: [val, val, lo]
+        # val_a=lo, val_b=val. LT_S: (val < lo)?
+        Instruction(OP_LT_S),        # 3: [val, (val<lo)]
+        Instruction(OP_JZ, 8),        # 4: if not(val<lo) → check upper
+        # val < lo: replace with lo
+        Instruction(OP_POP),          # 5: []
+        Instruction(OP_PUSH, lo),     # 6: [lo]
+        Instruction(OP_HALT),         # 7
+        # Check val > hi
+        Instruction(OP_DUP),          # 8: [val, val]
+        Instruction(OP_PUSH, hi),     # 9: [val, val, hi]
+        # val_a=hi, val_b=val. GT_S: (val > hi)?
+        Instruction(OP_GT_S),         # 10: [val, (val>hi)]
+        Instruction(OP_JZ, 15),       # 11: if not(val>hi) → val is in range
+        # val > hi: replace with hi
+        Instruction(OP_POP),          # 12: []
+        Instruction(OP_PUSH, hi),     # 13: [hi]
+        Instruction(OP_HALT),         # 14
+        # val in range: keep it
+        Instruction(OP_HALT),         # 15
+    ]
+    return prog, expected
 
 
 # ─── Test Suite ───────────────────────────────────────────────────
@@ -1131,7 +1401,7 @@ def test_model_summary():
     print(f"  M_top shape:      {tuple(model.M_top.shape)}")
     print(f"  sp_deltas shape:  {tuple(model.sp_deltas.shape)}")
     print(f"  linear ops:       12 (PUSH through ROT)")
-    print(f"  nonlinear ops:    5 (MUL, DIV_S, DIV_U, REM_S, REM_U)")
+    print(f"  nonlinear ops:    16 (5 arithmetic + 11 comparison)")
     print(f"  trainable params: {total_params}")
     print(f"  buffer params:    {total_buffers}")
     print(f"  total compiled:   {total_params + total_buffers}")
@@ -1177,13 +1447,158 @@ def test_step_count_comparison():
     return True  # informational only
 
 
+def test_comparison_unit():
+    """Unit tests for all 11 comparison opcodes."""
+    print("\n" + "=" * 60)
+    print("Test 9: Comparison Unit Tests")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    # EQZ tests (unary)
+    eqz_cases = [
+        ("eqz(0)→1",  0, 1),
+        ("eqz(1)→0",  1, 0),
+        ("eqz(5)→0",  5, 0),
+        ("eqz(-1)→0", -1, 0),
+    ]
+
+    passed = 0
+    total = 0
+
+    print("  --- EQZ (unary) ---")
+    for name, val, expected in eqz_cases:
+        prog, exp = make_compare_eqz(val)
+        assert exp == expected, f"Generator bug: {name}"
+        for label, executor in [("numpy", np_exec), ("torch", pt_exec)]:
+            trace = executor.execute(prog)
+            top = trace.steps[-1].top if trace.steps else None
+            ok = (top == expected)
+            if ok: passed += 1
+            total += 1
+            status = "PASS" if ok else "FAIL"
+            print(f"  {status}  {label:5s}  {name:20s}  expected={expected}  got={top}")
+
+    # Binary comparison tests
+    binary_ops = [
+        (OP_EQ,   "EQ"),
+        (OP_NE,   "NE"),
+        (OP_LT_S, "LT_S"),
+        (OP_LT_U, "LT_U"),
+        (OP_GT_S, "GT_S"),
+        (OP_GT_U, "GT_U"),
+        (OP_LE_S, "LE_S"),
+        (OP_LE_U, "LE_U"),
+        (OP_GE_S, "GE_S"),
+        (OP_GE_U, "GE_U"),
+    ]
+
+    # Test pairs: (a, b) where a is pushed first, b second
+    test_pairs = [
+        (5, 5),    # equal
+        (3, 7),    # a < b
+        (10, 2),   # a > b
+        (0, 0),    # both zero
+        (0, 1),    # zero vs positive
+    ]
+
+    for op, op_name in binary_ops:
+        print(f"\n  --- {op_name} ---")
+        for a, b in test_pairs:
+            prog, expected = make_compare_binary(op, a, b)
+            name = f"{op_name}({a},{b})→{expected}"
+            for label, executor in [("numpy", np_exec), ("torch", pt_exec)]:
+                trace = executor.execute(prog)
+                top = trace.steps[-1].top if trace.steps else None
+                ok = (top == expected)
+                if ok: passed += 1
+                total += 1
+                status = "PASS" if ok else "FAIL"
+                print(f"  {status}  {label:5s}  {name:25s}  got={top}")
+
+    # Verify trace match across all tests
+    trace_pass = 0
+    trace_total = 0
+    for _, val, _ in eqz_cases:
+        prog, _ = make_compare_eqz(val)
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        match, _ = compare_traces(np_trace, pt_trace)
+        if match: trace_pass += 1
+        trace_total += 1
+    for op, _ in binary_ops:
+        for a, b in test_pairs:
+            prog, _ = make_compare_binary(op, a, b)
+            np_trace = np_exec.execute(prog)
+            pt_trace = pt_exec.execute(prog)
+            match, _ = compare_traces(np_trace, pt_trace)
+            if match: trace_pass += 1
+            trace_total += 1
+
+    print(f"\n  Unit tests: {passed}/{total} passed")
+    print(f"  Trace match: {trace_pass}/{trace_total} numpy==pytorch")
+    return passed == total and trace_pass == trace_total
+
+
+def test_comparison_algorithms():
+    """Test programs using comparisons: max, abs, clamp."""
+    print("\n" + "=" * 60)
+    print("Test 10: Comparison Algorithms (max, abs, clamp)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    passed = 0
+    total = 0
+
+    # max(a, b)
+    print("  --- max ---")
+    max_cases = [(3, 7), (10, 2), (5, 5), (0, 1), (100, 99)]
+    for a, b in max_cases:
+        prog, expected = make_native_max(a, b)
+        ok, steps = test_algorithm(f"max({a},{b})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+        total += 1
+
+    # abs(n) — only test non-negative for now since our ISA uses positive ints primarily
+    print("\n  --- abs ---")
+    abs_cases = [0, 1, 5, 42, 100]
+    for n in abs_cases:
+        prog, expected = make_native_abs(n)
+        ok, steps = test_algorithm(f"abs({n})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+        total += 1
+
+    # clamp(val, lo, hi)
+    print("\n  --- clamp ---")
+    clamp_cases = [
+        (5, 0, 10),    # in range
+        (15, 0, 10),   # above
+        (0, 5, 10),    # below (note: 0 < 5 so clamped to 5)
+        (3, 3, 7),     # at lower bound
+        (7, 3, 7),     # at upper bound
+        (50, 10, 20),  # way above
+    ]
+    for val, lo, hi in clamp_cases:
+        prog, expected = make_native_clamp(val, lo, hi)
+        ok, steps = test_algorithm(f"clamp({val},{lo},{hi})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+        total += 1
+
+    print(f"\n  Result: {passed}/{total} passed")
+    return passed == total
+
+
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
-    print("Phase 14: Extended ISA — Chunk 1: Arithmetic Operations")
+    print("Phase 14: Extended ISA — Chunks 1+2: Arithmetic & Comparisons")
     print("=" * 60)
-    print(f"  New opcodes:   MUL, DIV_S, DIV_U, REM_S, REM_U")
+    print(f"  Chunk 1 ops:   MUL, DIV_S, DIV_U, REM_S, REM_U")
+    print(f"  Chunk 2 ops:   EQZ, EQ, NE, LT/GT/LE/GE_S/U")
     print(f"  Trap opcode:   OP_TRAP ({OP_TRAP}) — division by zero")
     print(f"  Total ISA:     {N_OPCODES} opcodes")
     print(f"  Architecture:  Linear + nonlinear FF dispatch")
@@ -1192,6 +1607,7 @@ def main():
     t0 = time.time()
     results = []
 
+    # Chunk 1 tests (arithmetic)
     results.append(("Arithmetic unit",     test_arithmetic_unit()))
     results.append(("Division by zero",    test_division_by_zero()))
     results.append(("Native multiply",     test_native_multiply()))
@@ -1199,6 +1615,12 @@ def main():
     results.append(("Native is_even",      test_native_is_even()))
     results.append(("Factorial",           test_factorial()))
     results.append(("GCD",                 test_gcd()))
+
+    # Chunk 2 tests (comparisons)
+    results.append(("Comparison unit",     test_comparison_unit()))
+    results.append(("Comparison algos",    test_comparison_algorithms()))
+
+    # Shared tests
     results.append(("Regression",          test_regression()))
     results.append(("Model summary",       test_model_summary()))
     results.append(("Step comparison",     test_step_count_comparison()))
@@ -1219,8 +1641,9 @@ def main():
     print(f"\n  Time: {elapsed:.2f}s")
 
     if all_pass:
-        print(f"\n  ✓ Phase 14 Chunk 1 complete: {N_OPCODES}-opcode ISA")
+        print(f"\n  ✓ Phase 14 Chunks 1+2 complete: {N_OPCODES}-opcode ISA")
         print(f"    Arithmetic ops collapse O(n) repeated-op algorithms to O(1).")
+        print(f"    Comparison ops enable native branching (max, abs, clamp).")
         print(f"    Division by zero traps cleanly (OP_TRAP).")
         print(f"    Nonlinear FF dispatch extends the compiled transformer paradigm.")
         print(f"    All Phase 4/11/13 tests pass (full backward compatibility).")
