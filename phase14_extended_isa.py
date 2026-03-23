@@ -1,0 +1,1235 @@
+"""
+Phase 14: Extended ISA — Chunk 1: Arithmetic Operations
+
+Adds 5 arithmetic opcodes to the compiled transformer's ISA:
+  MUL   (13)  — a b → (a*b)
+  DIV_S (14)  — a b → (b/a) signed, truncate toward zero. Trap if a==0.
+  DIV_U (15)  — a b → (b/a) unsigned (same as DIV_S for positive ints)
+  REM_S (16)  — a b → (b%a) signed, sign matches dividend
+  REM_U (17)  — a b → (b%a) unsigned (same as REM_S for positive ints)
+
+Division by zero triggers OP_TRAP (99): executor appends a TraceStep with
+op=OP_TRAP and breaks. The runner prints "TRAP: division by zero" instead
+of a result.
+
+Architecture note: MUL/DIV/REM are the first NONLINEAR opcodes. ADD/SUB
+could be expressed as linear combinations of [arg, val_a, val_b, val_c]
+via M_top. MUL (val_a * val_b) cannot. The FF dispatch now has both:
+  - M_top: linear routing matrix (handles PUSH through ROT)
+  - Nonlinear override: explicit computation for MUL/DIV/REM
+This is actually more faithful to real transformer FF layers (which have
+nonlinear activations) than the pure-linear M_top was.
+
+No new attention heads needed — all ops pop two values from existing stack
+reads and push one result via the same mechanism ADD/SUB use.
+
+Part of Issue #8 (Tier 1 ISA expansion). Chunk 1 of N (Issue #11).
+"""
+
+import numpy as np
+import torch
+import torch.nn as nn
+import time
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from phase4_stack_machine import (
+    program, Instruction, ReferenceExecutor, Trace, TraceStep,
+    OP_PUSH, OP_POP, OP_ADD, OP_DUP, OP_HALT, OP_NAMES,
+    TOKENS_PER_STEP, ALL_TESTS,
+)
+
+from phase12_percepta_model import (
+    PerceptaModel, PerceptaExtendedExecutor, CompiledAttentionHead,
+    embed_program_token, embed_stack_entry, embed_state,
+    D_MODEL, DTYPE, EPS, N_OPCODES as N_OPCODES_BASE,
+    DIM_IS_PROG, DIM_IS_STACK, DIM_IS_STATE,
+    DIM_PROG_KEY_0, DIM_PROG_KEY_1,
+    DIM_STACK_KEY_0, DIM_STACK_KEY_1,
+    DIM_OPCODE, DIM_VALUE, DIM_IP, DIM_SP, DIM_ONE,
+    DIM_IS_PUSH, DIM_IS_POP, DIM_IS_ADD, DIM_IS_DUP, DIM_IS_HALT,
+    DIM_IS_SUB, DIM_IS_JZ, DIM_IS_JNZ, DIM_IS_NOP,
+    OP_SUB, OP_JZ, OP_JNZ, OP_NOP,
+)
+
+# Import Phase 13 components
+from phase13_isa_completeness import (
+    Phase13Executor, Phase13Model, Phase13PyTorchExecutor,
+    embed_program_token_ext as embed_program_token_p13,
+    OP_SWAP, OP_OVER, OP_ROT,
+    DIM_IS_SWAP, DIM_IS_OVER, DIM_IS_ROT,
+    OPCODE_DIM_MAP as OPCODE_DIM_MAP_P13,
+    OPCODE_IDX as OPCODE_IDX_P13,
+    OP_NAMES_P13,
+    N_OPCODES as N_OPCODES_P13,
+    compare_traces, test_algorithm,
+    make_fibonacci, make_power_of_2, make_sum_1_to_n,
+    fib,
+)
+
+
+# ─── New Opcodes ──────────────────────────────────────────────────
+
+OP_MUL   = 13
+OP_DIV_S = 14
+OP_DIV_U = 15
+OP_REM_S = 16
+OP_REM_U = 17
+OP_TRAP  = 99  # Division by zero exit condition
+
+OP_NAMES_P14 = {
+    **OP_NAMES_P13,
+    OP_MUL:   "MUL",
+    OP_DIV_S: "DIV_S",
+    OP_DIV_U: "DIV_U",
+    OP_REM_S: "REM_S",
+    OP_REM_U: "REM_U",
+    OP_TRAP:  "TRAP",
+}
+
+# One-hot dimension assignments (continuing from Phase 13: SWAP=21, OVER=22, ROT=23)
+DIM_IS_MUL   = 24
+DIM_IS_DIV_S = 25
+DIM_IS_DIV_U = 26
+DIM_IS_REM_S = 27
+DIM_IS_REM_U = 28
+# D_MODEL = 36, so dims 24-28 are within range
+
+OPCODE_DIM_MAP = {
+    **OPCODE_DIM_MAP_P13,
+    OP_MUL:   DIM_IS_MUL,
+    OP_DIV_S: DIM_IS_DIV_S,
+    OP_DIV_U: DIM_IS_DIV_U,
+    OP_REM_S: DIM_IS_REM_S,
+    OP_REM_U: DIM_IS_REM_U,
+}
+
+OPCODE_IDX = {
+    **OPCODE_IDX_P13,
+    OP_MUL:   12,
+    OP_DIV_S: 13,
+    OP_DIV_U: 14,
+    OP_REM_S: 15,
+    OP_REM_U: 16,
+}
+
+N_OPCODES = 17  # 12 from Phase 13 + 5 new
+
+# Which opcodes are nonlinear (can't be expressed via M_top linear routing)
+NONLINEAR_OPS = {OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U}
+
+
+# ─── Signed division/remainder (truncate toward zero) ─────────────
+
+def _trunc_div(b, a):
+    """Signed integer division truncating toward zero (WASM semantics).
+    Python's // rounds toward negative infinity; we want C-style truncation.
+    """
+    return int(b / a)  # float division then truncate
+
+
+def _trunc_rem(b, a):
+    """Signed remainder matching truncated division: b - trunc(b/a)*a.
+    Sign of result matches dividend b (WASM i32.rem_s semantics).
+    """
+    return b - _trunc_div(b, a) * a
+
+
+# ─── Extended Embedding ───────────────────────────────────────────
+
+def embed_program_token_ext(pos, instr):
+    """Create embedding for a program instruction (Phase 14 ISA)."""
+    emb = torch.zeros(D_MODEL, dtype=DTYPE)
+    emb[DIM_IS_PROG]     = 1.0
+    emb[DIM_PROG_KEY_0]  = 2.0 * pos
+    emb[DIM_PROG_KEY_1]  = -float(pos * pos)
+    emb[DIM_OPCODE]      = float(instr.op)
+    emb[DIM_VALUE]       = float(instr.arg)
+    emb[DIM_ONE]         = 1.0
+    dim = OPCODE_DIM_MAP.get(instr.op)
+    if dim is not None:
+        emb[dim] = 1.0
+    return emb
+
+
+# ─── NumPy Executor ───────────────────────────────────────────────
+
+class Phase14Executor(Phase13Executor):
+    """Compiled numpy executor with Phase 14 arithmetic ops.
+
+    Adds MUL, DIV_S, DIV_U, REM_S, REM_U to Phase 13's executor.
+    Division by zero produces OP_TRAP exit.
+    """
+
+    def execute(self, prog, max_steps=5000):
+        trace = Trace(program=prog)
+
+        prog_keys = np.array([(2.0*j, -float(j*j)) for j in range(len(prog))])
+        prog_ops = np.array([instr.op for instr in prog])
+        prog_args = np.array([instr.arg for instr in prog])
+
+        stack_keys = []
+        stack_vals = []
+        write_count = 0
+        eps = 1e-10
+
+        ip = 0
+        sp = 0
+
+        def stack_write(addr, val):
+            nonlocal write_count
+            stack_keys.append((2.0*addr, -float(addr*addr) + eps*write_count))
+            stack_vals.append(val)
+            write_count += 1
+
+        def stack_read(addr):
+            if not stack_keys:
+                return 0
+            keys = np.array(stack_keys)
+            q = np.array([addr, 1.0])
+            scores = keys @ q
+            best = np.argmax(scores)
+            stored_addr = round(keys[best, 0] / 2.0)
+            return stack_vals[best] if stored_addr == addr else 0
+
+        for step in range(max_steps):
+            if ip >= len(prog):
+                break
+
+            op = prog[ip].op
+            arg = prog[ip].arg
+            next_ip = ip + 1
+            top = 0
+
+            # ── Phase 4 base ops ──
+            if op == OP_PUSH:
+                sp += 1
+                stack_write(sp, arg)
+                top = arg
+            elif op == OP_POP:
+                sp -= 1
+                top = stack_read(sp) if sp > 0 else 0
+            elif op == OP_ADD:
+                val_a = stack_read(sp)
+                val_b = stack_read(sp - 1)
+                result = val_a + val_b
+                sp -= 1
+                stack_write(sp, result)
+                top = result
+            elif op == OP_SUB:
+                val_a = stack_read(sp)
+                val_b = stack_read(sp - 1)
+                result = val_b - val_a
+                sp -= 1
+                stack_write(sp, result)
+                top = result
+            elif op == OP_DUP:
+                val = stack_read(sp)
+                sp += 1
+                stack_write(sp, val)
+                top = val
+
+            # ── Phase 13 stack manipulation ──
+            elif op == OP_SWAP:
+                val_a = stack_read(sp)
+                val_b = stack_read(sp - 1)
+                stack_write(sp, val_b)
+                stack_write(sp - 1, val_a)
+                top = val_b
+            elif op == OP_OVER:
+                val_b = stack_read(sp - 1)
+                sp += 1
+                stack_write(sp, val_b)
+                top = val_b
+            elif op == OP_ROT:
+                val_top    = stack_read(sp)
+                val_second = stack_read(sp - 1)
+                val_third  = stack_read(sp - 2)
+                stack_write(sp, val_third)
+                stack_write(sp - 1, val_top)
+                stack_write(sp - 2, val_second)
+                top = val_third
+
+            # ── Phase 14 arithmetic ──
+            elif op == OP_MUL:
+                val_a = stack_read(sp)
+                val_b = stack_read(sp - 1)
+                result = val_a * val_b
+                sp -= 1
+                stack_write(sp, result)
+                top = result
+            elif op in (OP_DIV_S, OP_DIV_U):
+                val_a = stack_read(sp)
+                if val_a == 0:
+                    trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
+                    break
+                val_b = stack_read(sp - 1)
+                result = _trunc_div(val_b, val_a)
+                sp -= 1
+                stack_write(sp, result)
+                top = result
+            elif op in (OP_REM_S, OP_REM_U):
+                val_a = stack_read(sp)
+                if val_a == 0:
+                    trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
+                    break
+                val_b = stack_read(sp - 1)
+                result = _trunc_rem(val_b, val_a)
+                sp -= 1
+                stack_write(sp, result)
+                top = result
+
+            # ── Control flow ──
+            elif op == OP_JZ:
+                cond = stack_read(sp)
+                sp -= 1
+                top = stack_read(sp) if sp > 0 else 0
+                if cond == 0:
+                    next_ip = arg
+            elif op == OP_JNZ:
+                cond = stack_read(sp)
+                sp -= 1
+                top = stack_read(sp) if sp > 0 else 0
+                if cond != 0:
+                    next_ip = arg
+            elif op == OP_NOP:
+                top = stack_read(sp) if sp > 0 else 0
+            elif op == OP_HALT:
+                top = stack_read(sp) if sp > 0 else 0
+                trace.steps.append(TraceStep(op, arg, sp, top))
+                break
+            else:
+                # Unknown opcode — treat as NOP
+                top = stack_read(sp) if sp > 0 else 0
+
+            trace.steps.append(TraceStep(op, arg, sp, top))
+            ip = next_ip
+
+        return trace
+
+
+# ─── PyTorch Model ────────────────────────────────────────────────
+
+class Phase14Model(Phase13Model):
+    """Compiled transformer with Phase 14 arithmetic ops.
+
+    Extends Phase 13's FF dispatch with nonlinear computation for
+    MUL, DIV_S, DIV_U, REM_S, REM_U. These can't be expressed as
+    linear routing via M_top (MUL = val_a * val_b, not a linear
+    combination of [arg, val_a, val_b, val_c]).
+
+    Architecture: M_top handles linear ops (PUSH through ROT).
+    Nonlinear ops have M_top rows set to zero; their results come
+    from explicit computation in forward(). The one-hot opcode
+    vector selects which path contributes to the final top value.
+    """
+
+    def __init__(self, d_model=D_MODEL):
+        # Skip Phase13Model.__init__(), build from nn.Module
+        nn.Module.__init__(self)
+        self.d_model = d_model
+
+        # Heads 0-4: same as Phase 13
+        self.head_prog_op  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_prog_arg = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_stack_a  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_stack_b  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1, use_bias_q=True)
+        self.head_stack_c  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1, use_bias_q=True)
+
+        # FF dispatch: 17 opcodes, 4 value inputs
+        self.register_buffer('M_top', torch.zeros(N_OPCODES, 4, dtype=DTYPE))
+        self.register_buffer('sp_deltas', torch.zeros(N_OPCODES, dtype=DTYPE))
+
+        self._compile_weights()
+
+    def _compile_weights(self):
+        """Set all weight matrices analytically."""
+        with torch.no_grad():
+            # ── Heads 0-4: identical to Phase 13 ──
+
+            # Head 0: Program opcode fetch
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_IP]  = 1.0
+            W[1, DIM_ONE] = 1.0
+            self.head_prog_op.W_Q.weight.copy_(W)
+
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_PROG_KEY_0] = 1.0
+            W[1, DIM_PROG_KEY_1] = 1.0
+            self.head_prog_op.W_K.weight.copy_(W)
+
+            W = torch.zeros(1, self.d_model)
+            W[0, DIM_OPCODE] = 1.0
+            self.head_prog_op.W_V.weight.copy_(W)
+
+            # Head 1: Program argument fetch
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_IP]  = 1.0
+            W[1, DIM_ONE] = 1.0
+            self.head_prog_arg.W_Q.weight.copy_(W)
+
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_PROG_KEY_0] = 1.0
+            W[1, DIM_PROG_KEY_1] = 1.0
+            self.head_prog_arg.W_K.weight.copy_(W)
+
+            W = torch.zeros(1, self.d_model)
+            W[0, DIM_VALUE] = 1.0
+            self.head_prog_arg.W_V.weight.copy_(W)
+
+            # Head 2: Stack read at SP
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_SP]  = 1.0
+            W[1, DIM_ONE] = 1.0
+            self.head_stack_a.W_Q.weight.copy_(W)
+
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_STACK_KEY_0] = 1.0
+            W[1, DIM_STACK_KEY_1] = 1.0
+            self.head_stack_a.W_K.weight.copy_(W)
+
+            W = torch.zeros(1, self.d_model)
+            W[0, DIM_VALUE] = 1.0
+            self.head_stack_a.W_V.weight.copy_(W)
+
+            # Head 3: Stack read at SP-1
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_SP]  = 1.0
+            W[1, DIM_ONE] = 1.0
+            self.head_stack_b.W_Q.weight.copy_(W)
+            b = torch.zeros(2)
+            b[0] = -1.0
+            self.head_stack_b.W_Q.bias.copy_(b)
+
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_STACK_KEY_0] = 1.0
+            W[1, DIM_STACK_KEY_1] = 1.0
+            self.head_stack_b.W_K.weight.copy_(W)
+
+            W = torch.zeros(1, self.d_model)
+            W[0, DIM_VALUE] = 1.0
+            self.head_stack_b.W_V.weight.copy_(W)
+
+            # Head 4: Stack read at SP-2 (for ROT)
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_SP]  = 1.0
+            W[1, DIM_ONE] = 1.0
+            self.head_stack_c.W_Q.weight.copy_(W)
+            b = torch.zeros(2)
+            b[0] = -2.0
+            self.head_stack_c.W_Q.bias.copy_(b)
+
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_STACK_KEY_0] = 1.0
+            W[1, DIM_STACK_KEY_1] = 1.0
+            self.head_stack_c.W_K.weight.copy_(W)
+
+            W = torch.zeros(1, self.d_model)
+            W[0, DIM_VALUE] = 1.0
+            self.head_stack_c.W_V.weight.copy_(W)
+
+            # ── FF dispatch: linear routing (Phase 13 ops) ──
+            # M_top maps [arg, val_a, val_b, val_c] → candidate top per opcode
+            #                         arg  va   vb   vc
+            self.M_top[0]  = torch.tensor([ 1.,  0.,  0.,  0.])  # PUSH: top = arg
+            self.M_top[1]  = torch.tensor([ 0.,  0.,  1.,  0.])  # POP:  top = val_b
+            self.M_top[2]  = torch.tensor([ 0.,  1.,  1.,  0.])  # ADD:  top = va + vb
+            self.M_top[3]  = torch.tensor([ 0.,  1.,  0.,  0.])  # DUP:  top = va
+            self.M_top[4]  = torch.tensor([ 0.,  1.,  0.,  0.])  # HALT: top = va
+            self.M_top[5]  = torch.tensor([ 0., -1.,  1.,  0.])  # SUB:  top = vb - va
+            self.M_top[6]  = torch.tensor([ 0.,  0.,  1.,  0.])  # JZ:   top = vb
+            self.M_top[7]  = torch.tensor([ 0.,  0.,  1.,  0.])  # JNZ:  top = vb
+            self.M_top[8]  = torch.tensor([ 0.,  1.,  0.,  0.])  # NOP:  top = va
+            self.M_top[9]  = torch.tensor([ 0.,  0.,  1.,  0.])  # SWAP: top = vb
+            self.M_top[10] = torch.tensor([ 0.,  0.,  1.,  0.])  # OVER: top = vb
+            self.M_top[11] = torch.tensor([ 0.,  0.,  0.,  1.])  # ROT:  top = vc
+
+            # Nonlinear ops: M_top rows stay zero — results computed in forward()
+            # self.M_top[12..16] = 0  (MUL, DIV_S, DIV_U, REM_S, REM_U)
+
+            # SP deltas:
+            # PUSH POP  ADD  DUP HALT SUB  JZ  JNZ NOP SWAP OVER ROT  MUL DIVS DIVU REMS REMU
+            self.sp_deltas.copy_(torch.tensor(
+                [1., -1., -1., 1., 0., -1., -1., -1., 0., 0., 1., 0.,
+                 -1., -1., -1., -1., -1.]))
+
+    def forward(self, query_emb, prog_embs, stack_embs):
+        """Execute one step.
+
+        Returns (opcode, arg, sp_delta, top, opcode_one_hot, val_a, val_b, val_c).
+        """
+        # Head 0: Fetch opcode
+        opcode_val, _, _ = self.head_prog_op(query_emb, prog_embs)
+        # Head 1: Fetch argument
+        arg_val, _, _ = self.head_prog_arg(query_emb, prog_embs)
+
+        # Head 2: Read stack[SP]
+        if stack_embs.shape[0] > 0:
+            val_a_raw, _, idx_a = self.head_stack_a(query_emb, stack_embs)
+            stored_addr_a = round(stack_embs[idx_a, DIM_STACK_KEY_0].item() / 2.0)
+            queried_sp = round(query_emb[DIM_SP].item())
+            val_a = val_a_raw[0] if stored_addr_a == queried_sp else torch.tensor(0.0, dtype=DTYPE)
+        else:
+            val_a = torch.tensor(0.0, dtype=DTYPE)
+
+        # Head 3: Read stack[SP-1]
+        if stack_embs.shape[0] > 0:
+            val_b_raw, _, idx_b = self.head_stack_b(query_emb, stack_embs)
+            stored_addr_b = round(stack_embs[idx_b, DIM_STACK_KEY_0].item() / 2.0)
+            queried_sp_m1 = round(query_emb[DIM_SP].item()) - 1
+            val_b = val_b_raw[0] if stored_addr_b == queried_sp_m1 else torch.tensor(0.0, dtype=DTYPE)
+        else:
+            val_b = torch.tensor(0.0, dtype=DTYPE)
+
+        # Head 4: Read stack[SP-2]
+        if stack_embs.shape[0] > 0:
+            val_c_raw, _, idx_c = self.head_stack_c(query_emb, stack_embs)
+            stored_addr_c = round(stack_embs[idx_c, DIM_STACK_KEY_0].item() / 2.0)
+            queried_sp_m2 = round(query_emb[DIM_SP].item()) - 2
+            val_c = val_c_raw[0] if stored_addr_c == queried_sp_m2 else torch.tensor(0.0, dtype=DTYPE)
+        else:
+            val_c = torch.tensor(0.0, dtype=DTYPE)
+
+        # Decode
+        opcode = round(opcode_val[0].item())
+        arg = round(arg_val[0].item())
+
+        # FF Dispatch — linear path (Phase 13 ops)
+        opcode_one_hot = torch.zeros(N_OPCODES, dtype=DTYPE)
+        idx = OPCODE_IDX.get(opcode, -1)
+        if idx >= 0:
+            opcode_one_hot[idx] = 1.0
+
+        values = torch.stack([
+            torch.tensor(float(arg), dtype=DTYPE),
+            val_a, val_b, val_c
+        ])
+        candidates = self.M_top @ values  # (N_OPCODES,)
+        top_linear = (opcode_one_hot * candidates).sum()
+
+        # FF Dispatch — nonlinear path (Phase 14 arithmetic)
+        va = round(val_a.item())
+        vb = round(val_b.item())
+
+        nonlinear = torch.zeros(N_OPCODES, dtype=DTYPE)
+        nonlinear[OPCODE_IDX[OP_MUL]] = float(va * vb)
+        if va != 0:
+            nonlinear[OPCODE_IDX[OP_DIV_S]] = float(_trunc_div(vb, va))
+            nonlinear[OPCODE_IDX[OP_DIV_U]] = float(_trunc_div(vb, va))
+            nonlinear[OPCODE_IDX[OP_REM_S]] = float(_trunc_rem(vb, va))
+            nonlinear[OPCODE_IDX[OP_REM_U]] = float(_trunc_rem(vb, va))
+        # else: zeros — executor handles the trap, model just returns 0
+
+        top_nonlinear = (opcode_one_hot * nonlinear).sum()
+        top = top_linear + top_nonlinear
+
+        sp_delta = (opcode_one_hot * self.sp_deltas).sum()
+
+        return (opcode, arg, int(sp_delta.item()), round(top.item()),
+                opcode_one_hot, round(val_a.item()), round(val_b.item()), round(val_c.item()))
+
+
+# ─── PyTorch Executor ─────────────────────────────────────────────
+
+class Phase14PyTorchExecutor:
+    """Executes programs using Phase14Model with full Phase 14 ISA."""
+
+    def __init__(self, model=None):
+        self.model = model or Phase14Model()
+        self.model.eval()
+
+    def execute(self, prog, max_steps=5000):
+        trace = Trace(program=prog)
+
+        prog_embs = torch.stack([
+            embed_program_token_ext(i, instr)
+            for i, instr in enumerate(prog)
+        ])
+
+        stack_embs_list = []
+        write_count = 0
+        ip = 0
+        sp = 0
+
+        with torch.no_grad():
+            for step in range(max_steps):
+                if ip >= len(prog):
+                    break
+
+                query = embed_state(ip, sp)
+                stack_embs = (torch.stack(stack_embs_list)
+                              if stack_embs_list
+                              else torch.zeros(0, D_MODEL, dtype=DTYPE))
+
+                opcode, arg, sp_delta, top, _, val_a, val_b, val_c = \
+                    self.model.forward(query, prog_embs, stack_embs)
+
+                if opcode == OP_HALT:
+                    trace.steps.append(TraceStep(opcode, arg, sp, top))
+                    break
+
+                # Trap: division by zero
+                if opcode in (OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U) and val_a == 0:
+                    trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
+                    break
+
+                # For JZ/JNZ: read condition BEFORE updating SP
+                cond_val = None
+                if opcode in (OP_JZ, OP_JNZ):
+                    cond_val = val_a
+
+                new_sp = sp + sp_delta
+
+                # Stack writes per opcode
+                if opcode in (OP_PUSH, OP_DUP, OP_OVER):
+                    stack_embs_list.append(
+                        embed_stack_entry(new_sp, top, write_count))
+                    write_count += 1
+                elif opcode in (OP_ADD, OP_SUB, OP_MUL, OP_DIV_S, OP_DIV_U,
+                                OP_REM_S, OP_REM_U):
+                    # All binary ops: pop two, push one at new_sp
+                    stack_embs_list.append(
+                        embed_stack_entry(new_sp, top, write_count))
+                    write_count += 1
+                elif opcode == OP_SWAP:
+                    stack_embs_list.append(
+                        embed_stack_entry(sp, val_b, write_count))
+                    write_count += 1
+                    stack_embs_list.append(
+                        embed_stack_entry(sp - 1, val_a, write_count))
+                    write_count += 1
+                elif opcode == OP_ROT:
+                    stack_embs_list.append(
+                        embed_stack_entry(sp, val_c, write_count))
+                    write_count += 1
+                    stack_embs_list.append(
+                        embed_stack_entry(sp - 1, val_a, write_count))
+                    write_count += 1
+                    stack_embs_list.append(
+                        embed_stack_entry(sp - 2, val_b, write_count))
+                    write_count += 1
+
+                trace.steps.append(TraceStep(opcode, arg, new_sp, top))
+                sp = new_sp
+
+                # IP update
+                if opcode == OP_JZ:
+                    ip = arg if cond_val == 0 else ip + 1
+                elif opcode == OP_JNZ:
+                    ip = arg if cond_val != 0 else ip + 1
+                else:
+                    ip += 1
+
+        return trace
+
+
+# ─── Program Generators ──────────────────────────────────────────
+
+def make_native_multiply(a, b):
+    """Compute a*b using native MUL. 4 instructions.
+
+    Contrast with Phase 13's make_multiply: 18 instructions, O(b) steps.
+    """
+    return [
+        Instruction(OP_PUSH, a),
+        Instruction(OP_PUSH, b),
+        Instruction(OP_MUL),
+        Instruction(OP_HALT),
+    ], a * b
+
+
+def make_native_divmod(a, b):
+    """Compute b/a and b%a. Returns (program, expected_quotient).
+
+    Stack: PUSH b, PUSH a, DIV_S → quotient on top.
+    """
+    if a == 0:
+        # Will trap
+        return [
+            Instruction(OP_PUSH, b),
+            Instruction(OP_PUSH, a),
+            Instruction(OP_DIV_S),
+            Instruction(OP_HALT),
+        ], None  # None signals expected trap
+    return [
+        Instruction(OP_PUSH, b),
+        Instruction(OP_PUSH, a),
+        Instruction(OP_DIV_S),
+        Instruction(OP_HALT),
+    ], _trunc_div(b, a)
+
+
+def make_native_remainder(a, b):
+    """Compute b%a using REM_S. Returns (program, expected_remainder)."""
+    if a == 0:
+        return [
+            Instruction(OP_PUSH, b),
+            Instruction(OP_PUSH, a),
+            Instruction(OP_REM_S),
+            Instruction(OP_HALT),
+        ], None  # trap
+    return [
+        Instruction(OP_PUSH, b),
+        Instruction(OP_PUSH, a),
+        Instruction(OP_REM_S),
+        Instruction(OP_HALT),
+    ], _trunc_rem(b, a)
+
+
+def make_native_is_even(n):
+    """Test parity using native REM_S + JZ. ~7 instructions.
+
+    Contrast with Phase 13's make_is_even: 17 instructions, O(n) steps.
+    """
+    prog = [
+        Instruction(OP_PUSH, n),      # 0: n
+        Instruction(OP_PUSH, 2),      # 1: 2
+        Instruction(OP_REM_S),        # 2: n % 2
+        Instruction(OP_JZ, 6),        # 3: if remainder == 0 → even
+        # Odd
+        Instruction(OP_PUSH, 0),      # 4
+        Instruction(OP_HALT),         # 5
+        # Even
+        Instruction(OP_PUSH, 1),      # 6
+        Instruction(OP_HALT),         # 7
+    ]
+    return prog, 1 if n % 2 == 0 else 0
+
+
+def make_factorial(n):
+    """Compute n! using native MUL.
+
+    Stack layout: [result, counter]
+    Each iteration: result *= counter, counter -= 1.
+
+    Returns (program, expected_result).
+    """
+    if n <= 1:
+        return [Instruction(OP_PUSH, 1), Instruction(OP_HALT)], 1
+
+    prog = [
+        Instruction(OP_PUSH, 1),      # 0: result = 1
+        Instruction(OP_PUSH, n),      # 1: counter = n
+        # ── Loop (addr 2) ──
+        Instruction(OP_DUP),          # 2: [result, counter, counter]
+        Instruction(OP_JZ, 12),       # 3: if counter == 0 → done
+        # Multiply: result *= counter
+        Instruction(OP_DUP),          # 4: [result, counter, counter]
+        Instruction(OP_ROT),          # 5: [counter, counter, result]
+        Instruction(OP_MUL),          # 6: [counter, counter*result]
+        Instruction(OP_SWAP),         # 7: [counter*result, counter]
+        # Decrement counter
+        Instruction(OP_PUSH, 1),      # 8
+        Instruction(OP_SUB),          # 9: [counter*result, counter-1]
+        # Loop
+        Instruction(OP_PUSH, 1),      # 10
+        Instruction(OP_JNZ, 2),       # 11
+        # ── Done (addr 12) ──
+        Instruction(OP_POP),          # 12: drop 0
+        Instruction(OP_HALT),         # 13
+    ]
+    expected = 1
+    for i in range(2, n + 1):
+        expected *= i
+    return prog, expected
+
+
+def make_gcd(a, b):
+    """Compute GCD(a, b) via Euclidean algorithm using native REM_S.
+
+    Stack: [a, b]. Loop: if b==0 → done (a is GCD). Else: a, b = b, a%b.
+
+    Returns (program, expected_result).
+    """
+    import math
+    if a == 0 and b == 0:
+        return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
+
+    prog = [
+        Instruction(OP_PUSH, a),      # 0: a
+        Instruction(OP_PUSH, b),      # 1: b
+        # ── Loop (addr 2) ──
+        Instruction(OP_DUP),          # 2: [a, b, b]
+        Instruction(OP_JZ, 10),       # 3: if b == 0 → done, result = a
+        # a, b = b, a % b
+        Instruction(OP_SWAP),         # 4: [b, a]   (note: OVER below reads b)
+        Instruction(OP_OVER),         # 5: [b, a, b]
+        Instruction(OP_REM_S),        # 6: [b, a%b]  (top=b, reads a and b)
+        # Wait — REM_S pops top two: stack[sp]=b, stack[sp-1]=a → result = a%b
+        # Actually: val_a = stack[sp] = b (the OVER'd copy), val_b = stack[sp-1] = a
+        # result = val_b % val_a = a % b ✓
+        # Stack now: [b, a%b]
+        # Loop back
+        Instruction(OP_PUSH, 1),      # 7
+        Instruction(OP_JNZ, 2),       # 8: always jump
+        Instruction(OP_NOP),          # 9: padding (never reached)
+        # ── Done (addr 10) ──
+        # Stack: [result, 0] after JZ popped the 0 copy
+        Instruction(OP_POP),          # 10: drop 0
+        Instruction(OP_HALT),         # 11
+    ]
+    return prog, math.gcd(a, b)
+
+
+# ─── Test Suite ───────────────────────────────────────────────────
+
+def test_trap_algorithm(name, prog, np_exec, pt_exec, verbose=False):
+    """Run a program expected to TRAP on both executors. Returns True if both trap."""
+    np_trace = np_exec.execute(prog)
+    pt_trace = pt_exec.execute(prog)
+
+    np_trapped = np_trace.steps and np_trace.steps[-1].op == OP_TRAP
+    pt_trapped = pt_trace.steps and pt_trace.steps[-1].op == OP_TRAP
+    match, detail = compare_traces(np_trace, pt_trace)
+    all_ok = np_trapped and pt_trapped and match
+
+    status = "PASS" if all_ok else "FAIL"
+    np_label = f"TRAP@{len(np_trace.steps)}" if np_trapped else f"top={np_trace.steps[-1].top if np_trace.steps else '?'}"
+    pt_label = f"TRAP@{len(pt_trace.steps)}" if pt_trapped else f"top={pt_trace.steps[-1].top if pt_trace.steps else '?'}"
+    print(f"  {status}  {name:30s}  numpy={np_label:>10}  torch={pt_label:>10}  "
+          f"trace_match={'Y' if match else 'N'}")
+
+    if not all_ok and verbose:
+        if not np_trapped:
+            print(f"         NumPy did not trap")
+        if not pt_trapped:
+            print(f"         PyTorch did not trap")
+        if not match:
+            print(f"         Trace mismatch: {detail}")
+
+    return all_ok
+
+
+def test_arithmetic_unit():
+    """Unit tests for MUL, DIV_S, DIV_U, REM_S, REM_U."""
+    print("=" * 60)
+    print("Test 1: Arithmetic Unit Tests")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    tests = [
+        # (name, program, expected_top)
+        ("mul_basic",
+         [Instruction(OP_PUSH, 7), Instruction(OP_PUSH, 8),
+          Instruction(OP_MUL), Instruction(OP_HALT)], 56),
+        ("mul_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_PUSH, 5),
+          Instruction(OP_MUL), Instruction(OP_HALT)], 0),
+        ("mul_one",
+         [Instruction(OP_PUSH, 1), Instruction(OP_PUSH, 42),
+          Instruction(OP_MUL), Instruction(OP_HALT)], 42),
+        ("mul_large",
+         [Instruction(OP_PUSH, 100), Instruction(OP_PUSH, 200),
+          Instruction(OP_MUL), Instruction(OP_HALT)], 20000),
+
+        ("div_s_basic",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
+          Instruction(OP_DIV_S), Instruction(OP_HALT)], 3),  # 10/3 = 3
+        ("div_s_exact",
+         [Instruction(OP_PUSH, 12), Instruction(OP_PUSH, 4),
+          Instruction(OP_DIV_S), Instruction(OP_HALT)], 3),  # 12/4 = 3
+        ("div_s_one",
+         [Instruction(OP_PUSH, 7), Instruction(OP_PUSH, 1),
+          Instruction(OP_DIV_S), Instruction(OP_HALT)], 7),  # 7/1 = 7
+        ("div_s_self",
+         [Instruction(OP_PUSH, 5), Instruction(OP_PUSH, 5),
+          Instruction(OP_DIV_S), Instruction(OP_HALT)], 1),  # 5/5 = 1
+
+        ("div_u_basic",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
+          Instruction(OP_DIV_U), Instruction(OP_HALT)], 3),
+
+        ("rem_s_basic",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
+          Instruction(OP_REM_S), Instruction(OP_HALT)], 1),  # 10%3 = 1
+        ("rem_s_exact",
+         [Instruction(OP_PUSH, 12), Instruction(OP_PUSH, 4),
+          Instruction(OP_REM_S), Instruction(OP_HALT)], 0),  # 12%4 = 0
+        ("rem_s_less_than",
+         [Instruction(OP_PUSH, 3), Instruction(OP_PUSH, 7),
+          Instruction(OP_REM_S), Instruction(OP_HALT)], 3),  # 3%7 = 3
+
+        ("rem_u_basic",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
+          Instruction(OP_REM_U), Instruction(OP_HALT)], 1),
+    ]
+
+    passed = 0
+    total = len(tests) * 2
+
+    for name, prog, expected in tests:
+        for label, executor in [("numpy", np_exec), ("torch", pt_exec)]:
+            trace = executor.execute(prog)
+            top = trace.steps[-1].top if trace.steps else None
+            ok = (top == expected)
+            if ok:
+                passed += 1
+            status = "PASS" if ok else "FAIL"
+            print(f"  {status}  {label:5s}  {name:20s}  expected={expected:>8}  got={top}")
+
+    # Verify traces match
+    trace_match = 0
+    for name, prog, _ in tests:
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        match, _ = compare_traces(np_trace, pt_trace)
+        if match:
+            trace_match += 1
+
+    print(f"\n  Unit tests: {passed}/{total} passed")
+    print(f"  Trace match: {trace_match}/{len(tests)} numpy==pytorch")
+    return passed == total and trace_match == len(tests)
+
+
+def test_division_by_zero():
+    """Test that division/remainder by zero produces TRAP."""
+    print("\n" + "=" * 60)
+    print("Test 2: Division by Zero → TRAP")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    trap_tests = [
+        ("div_s_by_zero",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
+          Instruction(OP_DIV_S), Instruction(OP_HALT)]),
+        ("div_u_by_zero",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
+          Instruction(OP_DIV_U), Instruction(OP_HALT)]),
+        ("rem_s_by_zero",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
+          Instruction(OP_REM_S), Instruction(OP_HALT)]),
+        ("rem_u_by_zero",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
+          Instruction(OP_REM_U), Instruction(OP_HALT)]),
+        ("div_zero_by_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_PUSH, 0),
+          Instruction(OP_DIV_S), Instruction(OP_HALT)]),
+    ]
+
+    passed = 0
+    for name, prog in trap_tests:
+        if test_trap_algorithm(name, prog, np_exec, pt_exec, verbose=True):
+            passed += 1
+
+    print(f"\n  Result: {passed}/{len(trap_tests)} passed")
+    return passed == len(trap_tests)
+
+
+def test_native_multiply():
+    """Test native MUL multiply vs Phase 13's repeated addition."""
+    print("\n" + "=" * 60)
+    print("Test 3: Native Multiply (MUL)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    cases = [(0, 5), (5, 0), (1, 7), (3, 4), (7, 8), (12, 10), (100, 200)]
+    passed = 0
+    for a, b in cases:
+        prog, expected = make_native_multiply(a, b)
+        ok, steps = test_algorithm(f"mul({a},{b})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok:
+            passed += 1
+            # Report step count improvement
+            if a > 0 and b > 0:
+                print(f"         Native: {steps} steps (vs ~{2*min(a,b)*6 + 8} with repeated addition)")
+
+    print(f"\n  Result: {passed}/{len(cases)} passed")
+    return passed == len(cases)
+
+
+def test_native_division():
+    """Test DIV_S and REM_S."""
+    print("\n" + "=" * 60)
+    print("Test 4: Native Division & Remainder")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    div_cases = [(3, 10), (4, 12), (1, 7), (5, 5), (7, 3), (100, 1000)]
+    passed = 0
+
+    print("  --- DIV_S ---")
+    for a, b in div_cases:
+        prog, expected = make_native_divmod(a, b)
+        ok, _ = test_algorithm(f"div({b}/{a})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+
+    print("\n  --- REM_S ---")
+    rem_cases = [(3, 10), (4, 12), (7, 3), (2, 15), (5, 5)]
+    for a, b in rem_cases:
+        prog, expected = make_native_remainder(a, b)
+        ok, _ = test_algorithm(f"rem({b}%{a})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+
+    total = len(div_cases) + len(rem_cases)
+    print(f"\n  Result: {passed}/{total} passed")
+    return passed == total
+
+
+def test_native_is_even():
+    """Test parity using REM_S — O(1) vs Phase 13's O(n)."""
+    print("\n" + "=" * 60)
+    print("Test 5: Native Parity (REM_S + JZ)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    cases = [0, 1, 2, 3, 4, 7, 10, 15, 20, 100]
+    passed = 0
+    for n in cases:
+        prog, expected = make_native_is_even(n)
+        label = "even" if expected else "odd"
+        ok, steps = test_algorithm(f"is_even({n})→{label}", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok:
+            passed += 1
+
+    print(f"\n  Result: {passed}/{len(cases)} passed")
+    return passed == len(cases)
+
+
+def test_factorial():
+    """Test factorial using native MUL."""
+    print("\n" + "=" * 60)
+    print("Test 6: Factorial (native MUL)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    cases = [0, 1, 2, 3, 4, 5, 7, 10]
+    passed = 0
+    for n in cases:
+        prog, expected = make_factorial(n)
+        ok, steps = test_algorithm(f"fact({n})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+
+    print(f"\n  Result: {passed}/{len(cases)} passed")
+    return passed == len(cases)
+
+
+def test_gcd():
+    """Test GCD using Euclidean algorithm with native REM_S."""
+    print("\n" + "=" * 60)
+    print("Test 7: GCD (Euclidean algorithm with REM_S)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    cases = [(12, 8), (100, 75), (7, 3), (15, 5), (17, 13), (48, 36), (1, 100)]
+    passed = 0
+    for a, b in cases:
+        prog, expected = make_gcd(a, b)
+        ok, steps = test_algorithm(f"gcd({a},{b})", prog, expected, np_exec, pt_exec, verbose=True)
+        if ok: passed += 1
+
+    print(f"\n  Result: {passed}/{len(cases)} passed")
+    return passed == len(cases)
+
+
+def test_regression():
+    """Verify all Phase 13 algorithms still work."""
+    print("\n" + "=" * 60)
+    print("Test 8: Regression (Phase 4 + Phase 11 + Phase 13)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    passed = 0
+    total = 0
+
+    # Phase 4 tests
+    for name, test_fn in ALL_TESTS:
+        prog, expected_top = test_fn()
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        np_top = np_trace.steps[-1].top if np_trace.steps else None
+        pt_top = pt_trace.steps[-1].top if pt_trace.steps else None
+        match, _ = compare_traces(np_trace, pt_trace)
+        ok = (np_top == expected_top and pt_top == expected_top and match)
+        if ok: passed += 1
+        total += 1
+        status = "PASS" if ok else "FAIL"
+        print(f"  {status}  {name:20s}  expected={expected_top:>5}  "
+              f"numpy={np_top}  torch={pt_top}  match={'Y' if match else 'N'}")
+
+    # Phase 11 extended tests
+    ext_tests = [
+        ("sub_basic",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
+          Instruction(OP_SUB), Instruction(OP_HALT)], 7),
+        ("loop_countdown",
+         [Instruction(OP_PUSH, 3), Instruction(OP_DUP),
+          Instruction(OP_PUSH, 1), Instruction(OP_SUB),
+          Instruction(OP_DUP), Instruction(OP_JNZ, 1),
+          Instruction(OP_HALT)], 0),
+        ("jz_taken",
+         [Instruction(OP_PUSH, 0), Instruction(OP_JZ, 3),
+          Instruction(OP_HALT),
+          Instruction(OP_PUSH, 42), Instruction(OP_HALT)], 42),
+    ]
+    for name, prog, expected in ext_tests:
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        np_top = np_trace.steps[-1].top if np_trace.steps else None
+        pt_top = pt_trace.steps[-1].top if pt_trace.steps else None
+        match, _ = compare_traces(np_trace, pt_trace)
+        ok = (np_top == expected and pt_top == expected and match)
+        if ok: passed += 1
+        total += 1
+        status = "PASS" if ok else "FAIL"
+        print(f"  {status}  {name:20s}  expected={expected:>5}  "
+              f"numpy={np_top}  torch={pt_top}  match={'Y' if match else 'N'}")
+
+    # Phase 13 algorithm suite
+    p13_algos = [
+        ("fib(10)", *make_fibonacci(10)),
+        ("fib(7)", *make_fibonacci(7)),
+        ("sum(1..10)", *make_sum_1_to_n(10)),
+        ("power(2^5)", *make_power_of_2(5)),
+    ]
+    for name, prog, expected in p13_algos:
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        np_top = np_trace.steps[-1].top if np_trace.steps else None
+        pt_top = pt_trace.steps[-1].top if pt_trace.steps else None
+        match, _ = compare_traces(np_trace, pt_trace)
+        ok = (np_top == expected and pt_top == expected and match)
+        if ok: passed += 1
+        total += 1
+        status = "PASS" if ok else "FAIL"
+        print(f"  {status}  {name:20s}  expected={expected:>5}  "
+              f"numpy={np_top}  torch={pt_top}  match={'Y' if match else 'N'}")
+
+    print(f"\n  Result: {passed}/{total} passed")
+    return passed == total
+
+
+def test_model_summary():
+    """Report model architecture."""
+    print("\n" + "=" * 60)
+    print("Model Architecture Summary")
+    print("=" * 60)
+
+    model = Phase14Model()
+    total_params = sum(p.numel() for p in model.parameters())
+    total_buffers = sum(b.numel() for b in model.buffers())
+
+    print(f"  d_model:          {D_MODEL}")
+    print(f"  n_active_heads:   5 (unchanged from Phase 13)")
+    print(f"  ISA opcodes:      {N_OPCODES} (was {N_OPCODES_P13} in Phase 13)")
+    print(f"  M_top shape:      {tuple(model.M_top.shape)}")
+    print(f"  sp_deltas shape:  {tuple(model.sp_deltas.shape)}")
+    print(f"  linear ops:       12 (PUSH through ROT)")
+    print(f"  nonlinear ops:    5 (MUL, DIV_S, DIV_U, REM_S, REM_U)")
+    print(f"  trainable params: {total_params}")
+    print(f"  buffer params:    {total_buffers}")
+    print(f"  total compiled:   {total_params + total_buffers}")
+
+    return True
+
+
+def test_step_count_comparison():
+    """Compare step counts: native ops vs Phase 13 repeated-op algorithms."""
+    print("\n" + "=" * 60)
+    print("Step Count Comparison: Native vs Repeated-Op")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+
+    comparisons = [
+        ("multiply(7, 100)", make_native_multiply(7, 100)),
+        ("multiply(12, 10)", make_native_multiply(12, 10)),
+        ("is_even(100)",     make_native_is_even(100)),
+        ("is_even(15)",      make_native_is_even(15)),
+    ]
+
+    # Phase 13 equivalents (import the old generators)
+    from phase13_isa_completeness import make_multiply as make_slow_multiply
+    from phase13_isa_completeness import make_is_even as make_slow_is_even
+
+    slow_comparisons = [
+        ("multiply(7, 100)", make_slow_multiply(7, 100)),
+        ("multiply(12, 10)", make_slow_multiply(12, 10)),
+        ("is_even(100)",     make_slow_is_even(100)),
+        ("is_even(15)",      make_slow_is_even(15)),
+    ]
+
+    for (name, (fast_prog, _)), (_, (slow_prog, _)) in zip(comparisons, slow_comparisons):
+        fast_trace = np_exec.execute(fast_prog)
+        slow_trace = np_exec.execute(slow_prog)
+        fast_steps = len(fast_trace.steps)
+        slow_steps = len(slow_trace.steps)
+        speedup = slow_steps / fast_steps if fast_steps > 0 else float('inf')
+        print(f"  {name:25s}  native={fast_steps:>4} steps  "
+              f"repeated={slow_steps:>4} steps  {speedup:.0f}× fewer steps")
+
+    return True  # informational only
+
+
+# ─── Main ─────────────────────────────────────────────────────────
+
+def main():
+    print("=" * 60)
+    print("Phase 14: Extended ISA — Chunk 1: Arithmetic Operations")
+    print("=" * 60)
+    print(f"  New opcodes:   MUL, DIV_S, DIV_U, REM_S, REM_U")
+    print(f"  Trap opcode:   OP_TRAP ({OP_TRAP}) — division by zero")
+    print(f"  Total ISA:     {N_OPCODES} opcodes")
+    print(f"  Architecture:  Linear + nonlinear FF dispatch")
+    print()
+
+    t0 = time.time()
+    results = []
+
+    results.append(("Arithmetic unit",     test_arithmetic_unit()))
+    results.append(("Division by zero",    test_division_by_zero()))
+    results.append(("Native multiply",     test_native_multiply()))
+    results.append(("Native div/rem",      test_native_division()))
+    results.append(("Native is_even",      test_native_is_even()))
+    results.append(("Factorial",           test_factorial()))
+    results.append(("GCD",                 test_gcd()))
+    results.append(("Regression",          test_regression()))
+    results.append(("Model summary",       test_model_summary()))
+    results.append(("Step comparison",     test_step_count_comparison()))
+
+    elapsed = time.time() - t0
+
+    # ── Summary ──
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+
+    all_pass = True
+    for name, ok in results:
+        status = "PASS" if ok else "FAIL"
+        if not ok: all_pass = False
+        print(f"  {status}  {name}")
+
+    print(f"\n  Time: {elapsed:.2f}s")
+
+    if all_pass:
+        print(f"\n  ✓ Phase 14 Chunk 1 complete: {N_OPCODES}-opcode ISA")
+        print(f"    Arithmetic ops collapse O(n) repeated-op algorithms to O(1).")
+        print(f"    Division by zero traps cleanly (OP_TRAP).")
+        print(f"    Nonlinear FF dispatch extends the compiled transformer paradigm.")
+        print(f"    All Phase 4/11/13 tests pass (full backward compatibility).")
+    else:
+        print("\n  ✗ Some tests failed. See details above.")
+
+    return all_pass
+
+
+if __name__ == "__main__":
+    ok = main()
+    sys.exit(0 if ok else 1)
