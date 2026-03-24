@@ -77,6 +77,7 @@ comptime OP_TRAP = 99
 
 comptime MASK32 = 0xFFFFFFFF
 comptime EPS    = Float64(1e-10)
+comptime COMPACT_INTERVAL = 128  # Compact every N writes
 
 
 # ─── Data structures ──────────────────────────────────────────────
@@ -110,6 +111,56 @@ struct CallFrame(Copyable, Movable):
 
 # ─── Parabolic memory primitives ─────────────────────────────────
 
+fn compact(mut ms: MemSpace):
+    """Remove stale entries: keep only latest write per address.
+
+    Walk backward (latest first); keep first occurrence of each address.
+    Re-encode parabolic keys with fresh write_count for correct ordering.
+    """
+    var n = len(ms.k0s)
+    if n < COMPACT_INTERVAL:
+        return
+
+    # Collect unique (addr, val) pairs, latest first
+    var seen_addrs = List[Int]()  # addresses we've already seen
+    var kept_addrs = List[Int]()  # addresses to keep (in reverse order)
+    var kept_vals  = List[Int]()  # corresponding values
+
+    for ri in range(n):
+        var i = n - 1 - ri  # walk backward
+        var addr = Int(ms.k0s[i] / 2.0 + 0.5)
+        # Check if already seen
+        var found = False
+        for j in range(len(seen_addrs)):
+            if seen_addrs[j] == addr:
+                found = True
+                break
+        if not found:
+            seen_addrs.append(addr)
+            kept_addrs.append(addr)
+            kept_vals.append(ms.vals[i])
+
+    # Rebuild SoA arrays with fresh sequential write_counts
+    var new_n = len(kept_addrs)
+    ms.k0s.clear()
+    ms.k1s.clear()
+    ms.vals.clear()
+    ms.k0s.reserve(new_n + COMPACT_INTERVAL)
+    ms.k1s.reserve(new_n + COMPACT_INTERVAL)
+    ms.vals.reserve(new_n + COMPACT_INTERVAL)
+
+    # Reverse to restore chronological order (oldest kept first)
+    var new_wc = 0
+    for ri in range(new_n):
+        var i = new_n - 1 - ri
+        var a = Float64(kept_addrs[i])
+        ms.k0s.append(2.0 * a)
+        ms.k1s.append(-(a * a) + EPS * Float64(new_wc))
+        ms.vals.append(kept_vals[i])
+        new_wc += 1
+    ms.write_count = new_wc
+
+
 @always_inline
 fn mem_write(mut ms: MemSpace, addr: Int, val: Int):
     var a = Float64(addr)
@@ -117,6 +168,14 @@ fn mem_write(mut ms: MemSpace, addr: Int, val: Int):
     ms.k1s.append(-(a * a) + EPS * Float64(ms.write_count))
     ms.vals.append(val)
     ms.write_count += 1
+
+
+@always_inline
+fn mem_write_compact(mut ms: MemSpace, addr: Int, val: Int):
+    """Write + trigger periodic compaction. Use for stack/heap, NOT locals."""
+    mem_write(ms, addr, val)
+    if len(ms.k0s) >= COMPACT_INTERVAL and len(ms.k0s) % COMPACT_INTERVAL == 0:
+        compact(ms)
 
 
 @always_inline
@@ -330,7 +389,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
         # ── Stack basics ──────────────────────────────────────────
         if op == OP_PUSH:
             sp += 1
-            mem_write(stack_keys, sp, arg)
+            mem_write_compact(stack_keys, sp, arg)
             top = arg
 
         elif op == OP_POP:
@@ -340,29 +399,29 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
         elif op == OP_DUP:
             var v = mem_read(stack_keys, sp)
             sp += 1
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_SWAP:
             var va = mem_read(stack_keys, sp)
             var vb = mem_read(stack_keys, sp - 1)
-            mem_write(stack_keys, sp,     vb)
-            mem_write(stack_keys, sp - 1, va)
+            mem_write_compact(stack_keys, sp,     vb)
+            mem_write_compact(stack_keys, sp - 1, va)
             top = vb
 
         elif op == OP_OVER:
             var vb = mem_read(stack_keys, sp - 1)
             sp += 1
-            mem_write(stack_keys, sp, vb)
+            mem_write_compact(stack_keys, sp, vb)
             top = vb
 
         elif op == OP_ROT:
             var v_top    = mem_read(stack_keys, sp)
             var v_second = mem_read(stack_keys, sp - 1)
             var v_third  = mem_read(stack_keys, sp - 2)
-            mem_write(stack_keys, sp,     v_third)
-            mem_write(stack_keys, sp - 1, v_top)
-            mem_write(stack_keys, sp - 2, v_second)
+            mem_write_compact(stack_keys, sp,     v_third)
+            mem_write_compact(stack_keys, sp - 1, v_top)
+            mem_write_compact(stack_keys, sp - 2, v_second)
             top = v_third
 
         elif op == OP_NOP:
@@ -380,7 +439,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = mask32(va + vb)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_SUB:
@@ -388,7 +447,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = mask32(vb - va)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_MUL:
@@ -396,7 +455,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = mask32(va * vb)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_DIV_S or op == OP_DIV_U:
@@ -408,7 +467,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = mask32(trunc_div(vb, va))
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_REM_S or op == OP_REM_U:
@@ -420,14 +479,14 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = mask32(trunc_rem(vb, va))
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         # ── Comparisons ──────────────────────────────────────────
         elif op == OP_EQZ:
             var va = mem_read(stack_keys, sp)
             var res = 1 if va == 0 else 0
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_EQ:
@@ -435,7 +494,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = 1 if va == vb else 0
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_NE:
@@ -443,7 +502,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = 1 if va != vb else 0
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_LT_S or op == OP_LT_U:
@@ -451,7 +510,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = 1 if vb < va else 0
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_GT_S or op == OP_GT_U:
@@ -459,7 +518,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = 1 if vb > va else 0
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_LE_S or op == OP_LE_U:
@@ -467,7 +526,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = 1 if vb <= va else 0
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_GE_S or op == OP_GE_U:
@@ -475,7 +534,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = 1 if vb >= va else 0
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         # ── Bitwise ──────────────────────────────────────────────
@@ -484,7 +543,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = to_i32(va) & to_i32(vb)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_OR:
@@ -492,7 +551,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = to_i32(va) | to_i32(vb)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_XOR:
@@ -500,7 +559,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = to_i32(va) ^ to_i32(vb)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_SHL:
@@ -508,7 +567,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = mask32(to_i32(vb) << (va & 31))
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_SHR_S:
@@ -516,7 +575,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = shr_s(vb, va)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_SHR_U:
@@ -524,7 +583,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = shr_u(vb, va)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_ROTL:
@@ -532,7 +591,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = rotl32(vb, va)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_ROTR:
@@ -540,38 +599,38 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vb = mem_read(stack_keys, sp - 1)
             var res = rotr32(vb, va)
             sp -= 1
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         # ── Unary + parametric ───────────────────────────────────
         elif op == OP_CLZ:
             var va = mem_read(stack_keys, sp)
             var res = clz32(va)
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_CTZ:
             var va = mem_read(stack_keys, sp)
             var res = ctz32(va)
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_POPCNT:
             var va = mem_read(stack_keys, sp)
             var res = _popcnt32(va)
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_ABS:
             var va = mem_read(stack_keys, sp)
             var res = -va if va < 0 else va
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_NEG:
             var va = mem_read(stack_keys, sp)
             var res = mask32(-va)
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         elif op == OP_SELECT:
@@ -580,7 +639,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var vc = mem_read(stack_keys, sp - 2)  # a (true value)
             var res = vc if va != 0 else vb
             sp -= 2
-            mem_write(stack_keys, sp, res)
+            mem_write_compact(stack_keys, sp, res)
             top = res
 
         # ── Locals ───────────────────────────────────────────────
@@ -588,7 +647,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var actual_idx = locals_base + arg
             var v = mem_read(locals_keys, actual_idx)
             sp += 1
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_LOCAL_SET:
@@ -608,51 +667,51 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
         elif op == OP_I32_LOAD:
             var addr = mem_read(stack_keys, sp)
             var v = mem_read(heap_keys, addr)
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_I32_STORE:
             var v    = mem_read(stack_keys, sp)
             var addr = mem_read(stack_keys, sp - 1)
-            mem_write(heap_keys, addr, v)
+            mem_write_compact(heap_keys, addr, v)
             sp -= 2
             top = mem_read(stack_keys, sp) if sp > 0 else 0
 
         elif op == OP_I32_LOAD8_U:
             var addr = mem_read(stack_keys, sp)
             var v = mem_read(heap_keys, addr) & 0xFF
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_I32_LOAD8_S:
             var addr = mem_read(stack_keys, sp)
             var v = sign_extend_8(mem_read(heap_keys, addr))
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_I32_LOAD16_U:
             var addr = mem_read(stack_keys, sp)
             var v = mem_read(heap_keys, addr) & 0xFFFF
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_I32_LOAD16_S:
             var addr = mem_read(stack_keys, sp)
             var v = sign_extend_16(mem_read(heap_keys, addr))
-            mem_write(stack_keys, sp, v)
+            mem_write_compact(stack_keys, sp, v)
             top = v
 
         elif op == OP_I32_STORE8:
             var v    = mem_read(stack_keys, sp) & 0xFF
             var addr = mem_read(stack_keys, sp - 1)
-            mem_write(heap_keys, addr, v)
+            mem_write_compact(heap_keys, addr, v)
             sp -= 2
             top = mem_read(stack_keys, sp) if sp > 0 else 0
 
         elif op == OP_I32_STORE16:
             var v    = mem_read(stack_keys, sp) & 0xFFFF
             var addr = mem_read(stack_keys, sp - 1)
-            mem_write(heap_keys, addr, v)
+            mem_write_compact(heap_keys, addr, v)
             sp -= 2
             top = mem_read(stack_keys, sp) if sp > 0 else 0
 
@@ -671,7 +730,7 @@ def execute(prog_ops: List[Int], prog_args: List[Int], verbose: Bool = True) rai
             var ret_val = mem_read(stack_keys, sp)
             var frame   = call_stack.pop()
             sp = frame.saved_sp + 1
-            mem_write(stack_keys, sp, ret_val)
+            mem_write_compact(stack_keys, sp, ret_val)
             locals_base = frame.saved_locals_base
             top = ret_val
             next_ip = frame.ret_addr
