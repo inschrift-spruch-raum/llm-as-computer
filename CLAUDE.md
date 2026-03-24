@@ -221,6 +221,10 @@ pip install -r requirements.txt --break-system-packages
 - Store checkpoint memories every ~5 min during training to survive cutoffs
 - Install torch/numpy at session start (`pip install torch numpy`); not pre-installed in CCotw
 
+### Commit and Push on Every File Write
+
+**Commit and push after every meaningful file write.** Sessions can be cut off at any time. To ensure work is never lost, commit and push to the working branch on GitHub every time you write or edit a file. Do not batch up multiple file changes into a single commit at the end — commit incrementally as you go. This way, if the session dies mid-task, the next session can pick up from the last push rather than starting over.
+
 ### Testing
 Always run phase scripts and verify output before committing. Each phase file is self-contained with its own test harness.
 
