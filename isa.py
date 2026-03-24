@@ -28,7 +28,8 @@ class Instruction:
     def __repr__(self):
         name = OP_NAMES.get(self.op, f"?{self.op}")
         if self.op in (OP_PUSH, OP_JZ, OP_JNZ,
-                        OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE):
+                        OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE,
+                        OP_CALL):
             return f"{name} {self.arg}"
         return name
 
@@ -53,6 +54,7 @@ def program(*instrs) -> List[Instruction]:
         "I32.LOAD8_U": 48, "I32.LOAD8_S": 49,
         "I32.LOAD16_U": 50, "I32.LOAD16_S": 51,
         "I32.STORE8": 52, "I32.STORE16": 53,
+        "CALL": 54, "RETURN": 55,
     }
     for instr in instrs:
         if isinstance(instr, Instruction):
@@ -92,7 +94,8 @@ class Trace:
         for i, s in enumerate(self.steps):
             name = OP_NAMES.get(s.op, "?")
             instr_str = f"{name} {s.arg}" if s.op in (
-                OP_PUSH, OP_JZ, OP_JNZ, OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE
+                OP_PUSH, OP_JZ, OP_JNZ, OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE,
+                OP_CALL
             ) else name
             lines.append(f"{i:4d}  {instr_str:<10} {s.sp:3d}  {s.top:5d}")
         return "\n".join(lines)
@@ -100,7 +103,7 @@ class Trace:
 
 # ─── Constants ────────────────────────────────────────────────────
 
-D_MODEL = 45
+D_MODEL = 51
 DTYPE = torch.float64
 EPS = 1e-6
 
@@ -159,6 +162,14 @@ DIM_IS_LOCAL_TEE  = 41
 DIM_IS_HEAP       = 42
 DIM_HEAP_KEY_0    = 43
 DIM_HEAP_KEY_1    = 44
+
+# Phase 17: call stack address space
+DIM_IS_CALL_STACK    = 45
+DIM_CALL_KEY_0       = 46
+DIM_CALL_KEY_1       = 47
+DIM_CALL_RET_ADDR    = 48
+DIM_CALL_SAVED_SP    = 49
+DIM_CALL_LOCALS_BASE = 50
 
 
 # ─── Opcodes ─────────────────────────────────────────────────────
@@ -234,10 +245,14 @@ OP_I32_LOAD16_S = 51
 OP_I32_STORE8  = 52
 OP_I32_STORE16 = 53
 
+# Phase 17: function calls
+OP_CALL   = 54
+OP_RETURN = 55
+
 # Trap
 OP_TRAP  = 99
 
-N_OPCODES = 53  # 45 base + 8 memory ops
+N_OPCODES = 55  # 53 base + 2 call ops
 
 
 # ─── Maps ─────────────────────────────────────────────────────────
@@ -261,6 +276,7 @@ OP_NAMES = {
     OP_I32_LOAD8_U: "I32.LOAD8_U", OP_I32_LOAD8_S: "I32.LOAD8_S",
     OP_I32_LOAD16_U: "I32.LOAD16_U", OP_I32_LOAD16_S: "I32.LOAD16_S",
     OP_I32_STORE8: "I32.STORE8", OP_I32_STORE16: "I32.STORE16",
+    OP_CALL: "CALL", OP_RETURN: "RETURN",
     OP_TRAP: "TRAP",
 }
 
@@ -298,6 +314,7 @@ OPCODE_IDX = {
     OP_I32_LOAD8_U: 47, OP_I32_LOAD8_S: 48,
     OP_I32_LOAD16_U: 49, OP_I32_LOAD16_S: 50,
     OP_I32_STORE8: 51, OP_I32_STORE16: 52,
+    OP_CALL: 53, OP_RETURN: 54,
 }
 
 NONLINEAR_OPS = {
@@ -504,6 +521,19 @@ def embed_heap_entry(addr, value, write_order):
     emb[DIM_HEAP_KEY_1]   = -float(addr * addr) + EPS * write_order
     emb[DIM_VALUE]        = float(value)
     emb[DIM_ONE]          = 1.0
+    return emb
+
+
+def embed_call_frame(depth, ret_addr, saved_sp, locals_base, write_order):
+    """Create embedding for a call stack frame."""
+    emb = torch.zeros(D_MODEL, dtype=DTYPE)
+    emb[DIM_IS_CALL_STACK]    = 1.0
+    emb[DIM_CALL_KEY_0]       = 2.0 * depth
+    emb[DIM_CALL_KEY_1]       = -float(depth * depth) + EPS * write_order
+    emb[DIM_CALL_RET_ADDR]    = float(ret_addr)
+    emb[DIM_CALL_SAVED_SP]    = float(saved_sp)
+    emb[DIM_CALL_LOCALS_BASE] = float(locals_base)
+    emb[DIM_ONE]              = 1.0
     return emb
 
 

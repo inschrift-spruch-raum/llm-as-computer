@@ -15,13 +15,15 @@ from isa import (
     Instruction, Trace, TraceStep,
     CompiledAttentionHead,
     embed_program_token, embed_stack_entry, embed_state,
-    embed_local_entry, embed_heap_entry,
+    embed_local_entry, embed_heap_entry, embed_call_frame,
     D_MODEL, DTYPE, EPS, N_OPCODES,
     DIM_IS_PROG, DIM_IS_STACK, DIM_IS_STATE,
     DIM_PROG_KEY_0, DIM_PROG_KEY_1,
     DIM_STACK_KEY_0, DIM_STACK_KEY_1,
     DIM_IS_LOCAL, DIM_LOCAL_KEY_0, DIM_LOCAL_KEY_1,
     DIM_IS_HEAP, DIM_HEAP_KEY_0, DIM_HEAP_KEY_1,
+    DIM_IS_CALL_STACK, DIM_CALL_KEY_0, DIM_CALL_KEY_1,
+    DIM_CALL_RET_ADDR, DIM_CALL_SAVED_SP, DIM_CALL_LOCALS_BASE,
     DIM_OPCODE, DIM_VALUE, DIM_IP, DIM_SP, DIM_ONE,
     OP_PUSH, OP_POP, OP_ADD, OP_DUP, OP_HALT,
     OP_SUB, OP_JZ, OP_JNZ, OP_NOP,
@@ -38,6 +40,7 @@ from isa import (
     OP_I32_LOAD8_U, OP_I32_LOAD8_S,
     OP_I32_LOAD16_U, OP_I32_LOAD16_S,
     OP_I32_STORE8, OP_I32_STORE16,
+    OP_CALL, OP_RETURN,
     OP_TRAP,
     OPCODE_DIM_MAP, OPCODE_IDX, NONLINEAR_OPS,
     _trunc_div, _trunc_rem, _to_i32, MASK32,
@@ -73,6 +76,10 @@ class NumPyExecutor:
         heap_vals = []
         heap_write_count = 0
 
+        # Call stack
+        call_stack = []  # list of (ret_addr, saved_sp, saved_locals_base)
+        locals_base = 0
+
         ip = 0
         sp = 0
 
@@ -94,19 +101,21 @@ class NumPyExecutor:
 
         def local_write(local_idx, val):
             nonlocal local_write_count
-            locals_keys.append((2.0*local_idx, -float(local_idx*local_idx) + eps*local_write_count))
+            actual_idx = locals_base + local_idx
+            locals_keys.append((2.0*actual_idx, -float(actual_idx*actual_idx) + eps*local_write_count))
             locals_vals.append(val)
             local_write_count += 1
 
         def local_read(local_idx):
             if not locals_keys:
                 return 0
+            actual_idx = locals_base + local_idx
             keys = np.array(locals_keys)
-            q = np.array([local_idx, 1.0])
+            q = np.array([actual_idx, 1.0])
             scores = keys @ q
             best = np.argmax(scores)
             stored_idx = round(keys[best, 0] / 2.0)
-            return locals_vals[best] if stored_idx == local_idx else 0
+            return locals_vals[best] if stored_idx == actual_idx else 0
 
         def heap_write(addr, val):
             nonlocal heap_write_count
@@ -395,6 +404,24 @@ class NumPyExecutor:
                 sp -= 2
                 top = stack_read(sp) if sp > 0 else 0
 
+            # ── Phase 17: function calls ──
+            elif op == OP_CALL:
+                call_stack.append((ip + 1, sp, locals_base))
+                locals_base = len(locals_keys)
+                top = stack_read(sp) if sp > 0 else 0
+                next_ip = arg
+            elif op == OP_RETURN:
+                if not call_stack:
+                    trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
+                    break
+                ret_val = stack_read(sp)
+                ret_addr, saved_sp, saved_locals_base = call_stack.pop()
+                sp = saved_sp + 1
+                stack_write(sp, ret_val)
+                locals_base = saved_locals_base
+                top = ret_val
+                next_ip = ret_addr
+
             # ── Control flow ──
             elif op == OP_JZ:
                 cond = stack_read(sp)
@@ -427,11 +454,11 @@ class NumPyExecutor:
 # ─── Compiled PyTorch Model ──────────────────────────────────────
 
 class CompiledModel(nn.Module):
-    """Compiled transformer with 9 attention heads and linear+nonlinear FF dispatch.
+    """Compiled transformer with 10 attention heads and linear+nonlinear FF dispatch.
 
     Architecture:
-      d_model=45, head_dim=2 (2D parabolic key space)
-      9 active attention heads:
+      d_model=51, head_dim=2 (2D parabolic key space)
+      10 active attention heads:
         Head 0: program opcode fetch
         Head 1: program arg fetch
         Head 2: stack read at SP
@@ -441,9 +468,10 @@ class CompiledModel(nn.Module):
         Head 6: local address verify
         Head 7: heap value fetch
         Head 8: heap address verify
+        Head 9: call stack read (v_dim=3: ret_addr, saved_sp, locals_base)
       FF dispatch:
-        M_top: linear routing matrix (handles PUSH through ROT + LOCAL + LOAD/STORE ops)
-        Nonlinear override: explicit computation for arith + cmp + bitwise + unary + parametric + width variants
+        M_top: linear routing matrix
+        Nonlinear override: explicit computation for complex ops
       sp_deltas: per-opcode stack pointer delta
     """
 
@@ -463,6 +491,8 @@ class CompiledModel(nn.Module):
         # Heads 7-8: heap (linear memory) access
         self.head_heap_val    = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
         self.head_heap_addr   = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        # Head 9: call stack read (v_dim=3 for ret_addr, saved_sp, locals_base)
+        self.head_call_stack  = CompiledAttentionHead(d_model, head_dim=2, v_dim=3)
 
         # FF dispatch: N_OPCODES opcodes, 6 value inputs (arg, va, vb, vc, local_val, heap_val)
         self.register_buffer('M_top', torch.zeros(N_OPCODES, 6, dtype=DTYPE))
@@ -617,6 +647,26 @@ class CompiledModel(nn.Module):
             W[0, DIM_HEAP_KEY_0] = 0.5  # extracts addr = key[0]/2
             self.head_heap_addr.W_V.weight.copy_(W)
 
+            # ── Head 9: Call stack read ──
+            # Query uses call_depth to find most recent frame
+            # Q extracts (call_depth, 1) from a synthetic query constructed in executor
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_VALUE]  = 1.0   # query = call_depth
+            W[1, DIM_ONE]    = 1.0
+            self.head_call_stack.W_Q.weight.copy_(W)
+
+            W = torch.zeros(2, self.d_model)
+            W[0, DIM_CALL_KEY_0] = 1.0
+            W[1, DIM_CALL_KEY_1] = 1.0
+            self.head_call_stack.W_K.weight.copy_(W)
+
+            # V extracts [ret_addr, saved_sp, locals_base] (v_dim=3)
+            W = torch.zeros(3, self.d_model)
+            W[0, DIM_CALL_RET_ADDR]    = 1.0
+            W[1, DIM_CALL_SAVED_SP]    = 1.0
+            W[2, DIM_CALL_LOCALS_BASE] = 1.0
+            self.head_call_stack.W_V.weight.copy_(W)
+
             # ── FF dispatch: linear routing ──
             # M_top maps [arg, val_a, val_b, val_c, local_val, heap_val] -> candidate top per opcode
             #                         arg  va   vb   vc   lv   hv
@@ -648,10 +698,15 @@ class CompiledModel(nn.Module):
             self.M_top[OPCODE_IDX[OP_I32_STORE8]]  = torch.tensor([ 0.,  0.,  0.,  1.,  0.,  0.])
             self.M_top[OPCODE_IDX[OP_I32_STORE16]] = torch.tensor([ 0.,  0.,  0.,  1.,  0.,  0.])
 
+            # CALL/RETURN: top = val_a (current stack top)
+            self.M_top[OPCODE_IDX[OP_CALL]]   = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])
+            self.M_top[OPCODE_IDX[OP_RETURN]] = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])
+
             # SP deltas
             # Indices 0-44: same as before
             # Indices 45-52: I32.LOAD(0), I32.STORE(-2), LOAD8_U(0), LOAD8_S(0),
             #                LOAD16_U(0), LOAD16_S(0), STORE8(-2), STORE16(-2)
+            # CALL and RETURN sp_deltas are 0 — executor handles sp changes directly
             self.sp_deltas.copy_(torch.tensor(
                 [1., -1., -1., 1., 0., -1., -1., -1., 0., 0., 1., 0.,
                  -1., -1., -1., -1., -1.,
@@ -659,9 +714,11 @@ class CompiledModel(nn.Module):
                  -1., -1., -1., -1., -1., -1., -1., -1.,
                  0., 0., 0., 0., 0., -2.,
                  1., -1., 0.,
-                 0., -2., 0., 0., 0., 0., -2., -2.]))
+                 0., -2., 0., 0., 0., 0., -2., -2.,
+                 0., 0.]))
 
-    def forward(self, query_emb, prog_embs, stack_embs, local_embs=None, heap_embs=None):
+    def forward(self, query_emb, prog_embs, stack_embs, local_embs=None, heap_embs=None,
+                call_embs=None, locals_base=0):
         """Execute one step.
 
         Returns (opcode, arg, sp_delta, top, opcode_one_hot, val_a, val_b, val_c, local_val, heap_val).
@@ -670,6 +727,8 @@ class CompiledModel(nn.Module):
             local_embs = torch.zeros(0, self.d_model, dtype=DTYPE)
         if heap_embs is None:
             heap_embs = torch.zeros(0, self.d_model, dtype=DTYPE)
+        if call_embs is None:
+            call_embs = torch.zeros(0, self.d_model, dtype=DTYPE)
 
         # Head 0: Fetch opcode
         opcode_val, _, _ = self.head_prog_op(query_emb, prog_embs)
@@ -704,18 +763,17 @@ class CompiledModel(nn.Module):
             val_c = torch.tensor(0.0, dtype=DTYPE)
 
         # Heads 5-6: Read local variable
-        # The query for locals uses the instruction's arg (local index),
-        # which is embedded in DIM_VALUE of the program token.
-        # We create a synthetic query with the arg as the local index.
+        # Query uses locals_base + arg to find the correct local
         arg_raw = round(arg_val[0].item())
+        actual_local_idx = locals_base + arg_raw
         if local_embs.shape[0] > 0:
             local_query = torch.zeros(self.d_model, dtype=DTYPE)
-            local_query[DIM_VALUE] = float(arg_raw)
+            local_query[DIM_VALUE] = float(actual_local_idx)
             local_query[DIM_ONE] = 1.0
             local_val_raw, _, idx_l = self.head_local_val(local_query, local_embs)
             local_addr_raw, _, _ = self.head_local_addr(local_query, local_embs)
             stored_local_addr = round(local_addr_raw[0].item())
-            local_val = local_val_raw[0] if stored_local_addr == arg_raw else torch.tensor(0.0, dtype=DTYPE)
+            local_val = local_val_raw[0] if stored_local_addr == actual_local_idx else torch.tensor(0.0, dtype=DTYPE)
         else:
             local_val = torch.tensor(0.0, dtype=DTYPE)
 
@@ -838,9 +896,13 @@ class TorchExecutor:
         stack_embs_list = []
         local_embs_list = []
         heap_embs_list = []
+        call_embs_list = []
         write_count = 0
         local_write_count = 0
         heap_write_count = 0
+        call_write_count = 0
+        call_stack = []  # list of (ret_addr, saved_sp, saved_locals_base)
+        locals_base = 0
         ip = 0
         sp = 0
 
@@ -859,9 +921,13 @@ class TorchExecutor:
                 heap_embs = (torch.stack(heap_embs_list)
                              if heap_embs_list
                              else torch.zeros(0, D_MODEL, dtype=DTYPE))
+                call_embs = (torch.stack(call_embs_list)
+                             if call_embs_list
+                             else torch.zeros(0, D_MODEL, dtype=DTYPE))
 
                 opcode, arg, sp_delta, top, _, val_a, val_b, val_c, local_val, heap_val = \
-                    self.model.forward(query, prog_embs, stack_embs, local_embs, heap_embs)
+                    self.model.forward(query, prog_embs, stack_embs, local_embs, heap_embs,
+                                       call_embs, locals_base)
 
                 if opcode == OP_HALT:
                     trace.steps.append(TraceStep(opcode, arg, sp, top))
@@ -926,14 +992,14 @@ class TorchExecutor:
                         embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode == OP_LOCAL_SET:
-                    # Pop stack top, write to locals space
+                    # Pop stack top, write to locals space (with base offset)
                     local_embs_list.append(
-                        embed_local_entry(arg, val_a, local_write_count))
+                        embed_local_entry(locals_base + arg, val_a, local_write_count))
                     local_write_count += 1
                 elif opcode == OP_LOCAL_TEE:
-                    # Copy stack top to locals space (no pop)
+                    # Copy stack top to locals space (no pop, with base offset)
                     local_embs_list.append(
-                        embed_local_entry(arg, val_a, local_write_count))
+                        embed_local_entry(locals_base + arg, val_a, local_write_count))
                     local_write_count += 1
 
                 # Memory ops: stack writes + heap side effects
@@ -960,6 +1026,32 @@ class TorchExecutor:
                     heap_embs_list.append(
                         embed_heap_entry(int(val_b), int(val_a) & 0xFFFF, heap_write_count))
                     heap_write_count += 1
+
+                # CALL/RETURN: complex state changes handled here
+                elif opcode == OP_CALL:
+                    call_stack.append((ip + 1, sp, locals_base))
+                    call_embs_list.append(
+                        embed_call_frame(len(call_stack) - 1, ip + 1, sp, locals_base, call_write_count))
+                    call_write_count += 1
+                    locals_base = len(local_embs_list)
+                    # sp unchanged, top = current stack top
+                    trace.steps.append(TraceStep(opcode, arg, sp, top))
+                    ip = arg
+                    continue
+                elif opcode == OP_RETURN:
+                    if not call_stack:
+                        trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
+                        break
+                    ret_val = val_a  # current stack top
+                    ret_addr, saved_sp, saved_locals_base = call_stack.pop()
+                    sp = saved_sp + 1
+                    stack_embs_list.append(
+                        embed_stack_entry(sp, ret_val, write_count))
+                    write_count += 1
+                    locals_base = saved_locals_base
+                    trace.steps.append(TraceStep(opcode, arg, sp, int(ret_val)))
+                    ip = ret_addr
+                    continue
 
                 trace.steps.append(TraceStep(opcode, arg, new_sp, top))
                 sp = new_sp
