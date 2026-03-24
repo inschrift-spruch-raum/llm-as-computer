@@ -1,5 +1,5 @@
 """
-Phase 14: Extended ISA — Chunks 1-3: Arithmetic, Comparison & Bitwise Operations
+Phase 14: Extended ISA — Chunks 1-4: Arithmetic, Comparison, Bitwise, Unary & Parametric Operations
 
 Chunk 1 (Issue #11): 5 arithmetic opcodes:
   MUL   (13)  — a b → (a*b)
@@ -31,6 +31,14 @@ Chunk 3 (Issue #13): 8 bitwise opcodes (all binary, sd=-1):
   ROTL  (35)  — a b → rotl(b, a)          32-bit left rotate
   ROTR  (36)  — a b → rotr(b, a)          32-bit right rotate
 
+Chunk 4 (Issue #14): 5 unary ops + 1 parametric op:
+  CLZ    (37)  — a → clz(a)               Count leading zeros (32-bit), sd=0
+  CTZ    (38)  — a → ctz(a)               Count trailing zeros (32-bit), sd=0
+  POPCNT (39)  — a → popcnt(a)            Population count (32-bit), sd=0
+  ABS    (40)  — a → abs(a)               Absolute value, sd=0
+  NEG    (41)  — a → -a                   Negate, sd=0
+  SELECT (42)  — a b c → (c≠0 ? a : b)   Ternary select, sd=-2
+
 Division by zero triggers OP_TRAP (99): executor appends a TraceStep with
 op=OP_TRAP and breaks. The runner prints "TRAP: division by zero" instead
 of a result.
@@ -50,11 +58,16 @@ dedicated one-hot embedding dims (D_MODEL=36 is fully allocated).
 The compiled model routes via opcode_one_hot from OPCODE_IDX, not
 embedding dims, so this works without D_MODEL expansion.
 
+Chunk 4 unary ops (CLZ, CTZ, POPCNT, ABS, NEG) also lack dedicated
+embedding dims and dispatch via OPCODE_IDX. SELECT reads three stack
+values (sp, sp-1, sp-2) using Head 4 for SP-2, with sd=-2.
+
 No new attention heads needed — all ops use the existing stack read/write
 mechanism.
 
 Part of Issue #8 (Tier 1 ISA expansion).
   Chunk 1: Issue #11 (closed). Chunk 2: Issue #12. Chunk 3: Issue #13.
+  Chunk 4: Issue #14.
 """
 
 import numpy as np
@@ -126,6 +139,12 @@ OP_SHR_S = 33
 OP_SHR_U = 34
 OP_ROTL  = 35
 OP_ROTR  = 36
+OP_CLZ    = 37
+OP_CTZ    = 38
+OP_POPCNT = 39
+OP_ABS    = 40
+OP_NEG    = 41
+OP_SELECT = 42
 OP_TRAP  = 99  # Division by zero exit condition
 
 OP_NAMES_P14 = {
@@ -154,6 +173,12 @@ OP_NAMES_P14 = {
     OP_SHR_U: "SHR_U",
     OP_ROTL:  "ROTL",
     OP_ROTR:  "ROTR",
+    OP_CLZ:    "CLZ",
+    OP_CTZ:    "CTZ",
+    OP_POPCNT: "POPCNT",
+    OP_ABS:    "ABS",
+    OP_NEG:    "NEG",
+    OP_SELECT: "SELECT",
     OP_TRAP:  "TRAP",
 }
 
@@ -220,9 +245,15 @@ OPCODE_IDX = {
     OP_SHR_U: 33,
     OP_ROTL:  34,
     OP_ROTR:  35,
+    OP_CLZ:    36,
+    OP_CTZ:    37,
+    OP_POPCNT: 38,
+    OP_ABS:    39,
+    OP_NEG:    40,
+    OP_SELECT: 41,
 }
 
-N_OPCODES = 36  # 12 from Phase 13 + 5 arithmetic + 11 comparison + 8 bitwise
+N_OPCODES = 42  # 12 base + 5 arith + 11 cmp + 8 bitwise + 5 unary + 1 parametric
 
 # Which opcodes are nonlinear (can't be expressed via M_top linear routing)
 NONLINEAR_OPS = {OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U,
@@ -231,7 +262,8 @@ NONLINEAR_OPS = {OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U,
                  OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U,
                  OP_AND, OP_OR, OP_XOR,
                  OP_SHL, OP_SHR_S, OP_SHR_U,
-                 OP_ROTL, OP_ROTR}
+                 OP_ROTL, OP_ROTR,
+                 OP_CLZ, OP_CTZ, OP_POPCNT, OP_ABS, OP_NEG, OP_SELECT}
 
 
 # ─── Signed division/remainder (truncate toward zero) ─────────────
@@ -290,7 +322,35 @@ def _rotr32(b, a):
     return ((val >> shift) | (val << (32 - shift))) & MASK32 if shift else val
 
 
-# ─── Extended Embedding ───────────────────────────────────────────
+def _clz32(val):
+    """Count leading zeros in 32-bit representation."""
+    v = _to_i32(val)
+    if v == 0:
+        return 32
+    n = 0
+    if v <= 0x0000FFFF: n += 16; v <<= 16
+    if v <= 0x00FFFFFF: n += 8;  v <<= 8
+    if v <= 0x0FFFFFFF: n += 4;  v <<= 4
+    if v <= 0x3FFFFFFF: n += 2;  v <<= 2
+    if v <= 0x7FFFFFFF: n += 1
+    return n
+
+def _ctz32(val):
+    """Count trailing zeros in 32-bit representation."""
+    v = _to_i32(val)
+    if v == 0:
+        return 32
+    n = 0
+    if (v & 0x0000FFFF) == 0: n += 16; v >>= 16
+    if (v & 0x000000FF) == 0: n += 8;  v >>= 8
+    if (v & 0x0000000F) == 0: n += 4;  v >>= 4
+    if (v & 0x00000003) == 0: n += 2;  v >>= 2
+    if (v & 0x00000001) == 0: n += 1
+    return n
+
+def _popcnt32(val):
+    """Population count (number of set bits) in 32-bit representation."""
+    return bin(_to_i32(val)).count('1')
 
 def embed_program_token_ext(pos, instr):
     """Create embedding for a program instruction (Phase 14 ISA)."""
@@ -518,6 +578,41 @@ class Phase14Executor(Phase13Executor):
                 stack_write(sp, result)
                 top = result
 
+            # ── Phase 14 Chunk 4: unary + parametric ops ──
+            elif op == OP_CLZ:
+                val_a = stack_read(sp)
+                result = _clz32(val_a)
+                stack_write(sp, result)  # sd=0, replaces top
+                top = result
+            elif op == OP_CTZ:
+                val_a = stack_read(sp)
+                result = _ctz32(val_a)
+                stack_write(sp, result)
+                top = result
+            elif op == OP_POPCNT:
+                val_a = stack_read(sp)
+                result = _popcnt32(val_a)
+                stack_write(sp, result)
+                top = result
+            elif op == OP_ABS:
+                val_a = stack_read(sp)
+                result = abs(int(val_a))
+                stack_write(sp, result)
+                top = result
+            elif op == OP_NEG:
+                val_a = stack_read(sp)
+                result = -int(val_a)
+                stack_write(sp, result)
+                top = result
+            elif op == OP_SELECT:
+                val_a = stack_read(sp)       # c (condition)
+                val_b = stack_read(sp - 1)   # b (false value)
+                val_c = stack_read(sp - 2)   # a (true value)
+                result = val_c if val_a != 0 else val_b
+                sp -= 2
+                stack_write(sp, result)
+                top = result
+
             # ── Control flow ──
             elif op == OP_JZ:
                 cond = stack_read(sp)
@@ -695,11 +790,13 @@ class Phase14Model(Phase13Model):
             # Idx: PUSH POP  ADD  DUP HALT SUB  JZ  JNZ NOP SWAP OVER ROT
             #      MUL DIVS DIVU REMS REMU EQZ  EQ   NE LTS LTU GTS GTU LES LEU GES GEU
             #      AND  OR  XOR  SHL SHRS SHRU ROTL ROTR
+            #      CLZ  CTZ  POPCNT ABS NEG SELECT
             self.sp_deltas.copy_(torch.tensor(
                 [1., -1., -1., 1., 0., -1., -1., -1., 0., 0., 1., 0.,
                  -1., -1., -1., -1., -1.,
                  0.,  -1., -1., -1., -1., -1., -1., -1., -1., -1., -1.,
-                 -1., -1., -1., -1., -1., -1., -1., -1.]))
+                 -1., -1., -1., -1., -1., -1., -1., -1.,
+                 0., 0., 0., 0., 0., -2.]))
 
     def forward(self, query_emb, prog_embs, stack_embs):
         """Execute one step.
@@ -791,6 +888,17 @@ class Phase14Model(Phase13Model):
         nonlinear[OPCODE_IDX[OP_ROTL]]  = float(_rotl32(vb, va))
         nonlinear[OPCODE_IDX[OP_ROTR]]  = float(_rotr32(vb, va))
 
+        # Unary ops: operate on val_a (top of stack), sd=0
+        nonlinear[OPCODE_IDX[OP_CLZ]]    = float(_clz32(va))
+        nonlinear[OPCODE_IDX[OP_CTZ]]    = float(_ctz32(va))
+        nonlinear[OPCODE_IDX[OP_POPCNT]] = float(_popcnt32(va))
+        nonlinear[OPCODE_IDX[OP_ABS]]    = float(abs(int(va)))
+        nonlinear[OPCODE_IDX[OP_NEG]]    = float(-int(va))
+
+        # Parametric: SELECT — c≠0 ? a : b where c=va(sp), b=vb(sp-1), a=vc(sp-2)
+        vc = round(val_c.item())
+        nonlinear[OPCODE_IDX[OP_SELECT]] = float(vc if va != 0 else vb)
+
         top_nonlinear = (opcode_one_hot * nonlinear).sum()
         top = top_linear + top_nonlinear
 
@@ -868,8 +976,13 @@ class Phase14PyTorchExecutor:
                     stack_embs_list.append(
                         embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
-                elif opcode == OP_EQZ:
+                elif opcode in (OP_EQZ, OP_CLZ, OP_CTZ, OP_POPCNT, OP_ABS, OP_NEG):
                     # Unary: sd=0, replaces top at same sp
+                    stack_embs_list.append(
+                        embed_stack_entry(new_sp, top, write_count))
+                    write_count += 1
+                elif opcode == OP_SELECT:
+                    # Parametric: sd=-2, push result at new_sp
                     stack_embs_list.append(
                         embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
@@ -1372,6 +1485,138 @@ def make_bit_extract(n, bit_pos):
     return prog, expected
 
 
+# ─── Chunk 4: Unary + Parametric Program Generators ──────────────
+
+def make_native_clz(n):
+    """Count leading zeros of n using native CLZ. 3 instructions.
+
+    Contrast with loop-based approach: O(32) steps.
+    Returns (program, expected_result).
+    """
+    return [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_CLZ),
+        Instruction(OP_HALT),
+    ], _clz32(n)
+
+def make_native_ctz(n):
+    """Count trailing zeros of n using native CTZ. 3 instructions."""
+    return [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_CTZ),
+        Instruction(OP_HALT),
+    ], _ctz32(n)
+
+def make_native_popcnt(n):
+    """Population count of n using native POPCNT. 3 instructions.
+
+    Contrast with make_popcount_loop: O(bits) steps using AND + SHR_U loop.
+    Returns (program, expected_result).
+    """
+    return [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_POPCNT),
+        Instruction(OP_HALT),
+    ], _popcnt32(n)
+
+def make_native_abs(n):
+    """Absolute value using native ABS. 3 instructions.
+
+    Contrast with make_native_abs (comparison-based, Chunk 2): ~8 instructions.
+    Returns (program, expected_result).
+    """
+    return [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_ABS),
+        Instruction(OP_HALT),
+    ], abs(int(n))
+
+def make_native_neg(n):
+    """Negate n using native NEG. 3 instructions."""
+    return [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_NEG),
+        Instruction(OP_HALT),
+    ], -int(n)
+
+def make_select(a, b, c):
+    """SELECT: push a, b, c; SELECT pops all three → (c≠0 ? a : b).
+
+    Stack before SELECT: [a, b, c] with c on top.
+    Returns (program, expected_result).
+    """
+    expected = a if c != 0 else b
+    return [
+        Instruction(OP_PUSH, a),   # sp-2: a (true value)
+        Instruction(OP_PUSH, b),   # sp-1: b (false value)
+        Instruction(OP_PUSH, c),   # sp:   c (condition)
+        Instruction(OP_SELECT),
+        Instruction(OP_HALT),
+    ], expected
+
+def make_select_max(a, b):
+    """Max of two numbers using GT_S + SELECT. 7 instructions.
+
+    Stack: PUSH a, PUSH b, PUSH a, PUSH b, GT_S, SELECT, HALT.
+    GT_S produces 1 if a > b (since b is TOS, a is second: checks a > b).
+    SELECT: condition=GT result, false=b, true=a.
+
+    Actually stack layout for SELECT is [true_val, false_val, cond]:
+      PUSH a → [a]
+      PUSH b → [a, b]
+      PUSH a → [a, b, a]
+      PUSH b → [a, b, a, b]
+      GT_S   → [a, b, (a>b)?1:0]   (pops a,b from top, pushes comparison)
+      SELECT → [max(a,b)]           (pops condition, false, true)
+    """
+    expected = max(a, b)
+    prog = [
+        Instruction(OP_PUSH, a),   # 0: [a]
+        Instruction(OP_PUSH, b),   # 1: [a, b]
+        Instruction(OP_PUSH, a),   # 2: [a, b, a]
+        Instruction(OP_PUSH, b),   # 3: [a, b, a, b]
+        Instruction(OP_GT_S),      # 4: [a, b, (a>b)]
+        Instruction(OP_SELECT),    # 5: [result]
+        Instruction(OP_HALT),      # 6
+    ]
+    return prog, expected
+
+def make_log2_floor(n):
+    """Floor of log2(n) using CLZ: 31 - CLZ(n). 5 instructions.
+
+    Only valid for n > 0.
+    Returns (program, expected_result).
+    """
+    if n <= 0:
+        return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
+    expected = 31 - _clz32(n)
+    prog = [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_CLZ),
+        Instruction(OP_PUSH, 31),
+        Instruction(OP_SWAP),
+        Instruction(OP_SUB),       # 31 - clz(n)
+        Instruction(OP_HALT),
+    ]
+    return prog, expected
+
+def make_is_power_of_2(n):
+    """Check if n is a power of 2 using POPCNT. Result: 1 or 0.
+
+    A positive integer is a power of 2 iff it has exactly one set bit.
+    Returns (program, expected_result).
+    """
+    expected = 1 if (n > 0 and _popcnt32(n) == 1) else 0
+    prog = [
+        Instruction(OP_PUSH, n),
+        Instruction(OP_POPCNT),     # number of set bits
+        Instruction(OP_PUSH, 1),
+        Instruction(OP_EQ),         # popcnt == 1 ?
+        Instruction(OP_HALT),
+    ]
+    return prog, expected
+
+
 # ─── Test Suite ───────────────────────────────────────────────────
 
 def test_trap_algorithm(name, prog, np_exec, pt_exec, verbose=False):
@@ -1731,7 +1976,7 @@ def test_model_summary():
     print(f"  M_top shape:      {tuple(model.M_top.shape)}")
     print(f"  sp_deltas shape:  {tuple(model.sp_deltas.shape)}")
     print(f"  linear ops:       12 (PUSH through ROT)")
-    print(f"  nonlinear ops:    24 (5 arithmetic + 11 comparison + 8 bitwise)")
+    print(f"  nonlinear ops:    30 (5 arith + 11 cmp + 8 bitwise + 5 unary + 1 parametric)")
     print(f"  trainable params: {total_params}")
     print(f"  buffer params:    {total_buffers}")
     print(f"  total compiled:   {total_params + total_buffers}")
@@ -2161,15 +2406,287 @@ def test_bitwise_algorithms():
     return passed == total
 
 
+# ─── Chunk 4 Tests ────────────────────────────────────────────────
+
+def test_unary_unit():
+    """Unit tests for CLZ, CTZ, POPCNT, ABS, NEG."""
+    print("\n" + "=" * 60)
+    print("Test: Unary ops unit (CLZ, CTZ, POPCNT, ABS, NEG)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    tests = [
+        # CLZ: count leading zeros (32-bit)
+        ("clz_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_CLZ), Instruction(OP_HALT)], 32),
+        ("clz_one",
+         [Instruction(OP_PUSH, 1), Instruction(OP_CLZ), Instruction(OP_HALT)], 31),
+        ("clz_two",
+         [Instruction(OP_PUSH, 2), Instruction(OP_CLZ), Instruction(OP_HALT)], 30),
+        ("clz_128",
+         [Instruction(OP_PUSH, 128), Instruction(OP_CLZ), Instruction(OP_HALT)], 24),
+        ("clz_255",
+         [Instruction(OP_PUSH, 255), Instruction(OP_CLZ), Instruction(OP_HALT)], 24),
+        ("clz_65536",
+         [Instruction(OP_PUSH, 65536), Instruction(OP_CLZ), Instruction(OP_HALT)], 15),
+
+        # CTZ: count trailing zeros (32-bit)
+        ("ctz_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_CTZ), Instruction(OP_HALT)], 32),
+        ("ctz_one",
+         [Instruction(OP_PUSH, 1), Instruction(OP_CTZ), Instruction(OP_HALT)], 0),
+        ("ctz_two",
+         [Instruction(OP_PUSH, 2), Instruction(OP_CTZ), Instruction(OP_HALT)], 1),
+        ("ctz_eight",
+         [Instruction(OP_PUSH, 8), Instruction(OP_CTZ), Instruction(OP_HALT)], 3),
+        ("ctz_1024",
+         [Instruction(OP_PUSH, 1024), Instruction(OP_CTZ), Instruction(OP_HALT)], 10),
+        ("ctz_12",
+         [Instruction(OP_PUSH, 12), Instruction(OP_CTZ), Instruction(OP_HALT)], 2),  # 0b1100
+
+        # POPCNT: population count (32-bit)
+        ("popcnt_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_POPCNT), Instruction(OP_HALT)], 0),
+        ("popcnt_one",
+         [Instruction(OP_PUSH, 1), Instruction(OP_POPCNT), Instruction(OP_HALT)], 1),
+        ("popcnt_255",
+         [Instruction(OP_PUSH, 255), Instruction(OP_POPCNT), Instruction(OP_HALT)], 8),
+        ("popcnt_7",
+         [Instruction(OP_PUSH, 7), Instruction(OP_POPCNT), Instruction(OP_HALT)], 3),
+        ("popcnt_1023",
+         [Instruction(OP_PUSH, 1023), Instruction(OP_POPCNT), Instruction(OP_HALT)], 10),
+
+        # ABS: absolute value
+        ("abs_positive",
+         [Instruction(OP_PUSH, 42), Instruction(OP_ABS), Instruction(OP_HALT)], 42),
+        ("abs_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_ABS), Instruction(OP_HALT)], 0),
+        ("abs_negative",
+         [Instruction(OP_PUSH, -7), Instruction(OP_ABS), Instruction(OP_HALT)], 7),
+        ("abs_neg_one",
+         [Instruction(OP_PUSH, -1), Instruction(OP_ABS), Instruction(OP_HALT)], 1),
+
+        # NEG: negate
+        ("neg_positive",
+         [Instruction(OP_PUSH, 5), Instruction(OP_NEG), Instruction(OP_HALT)], -5),
+        ("neg_zero",
+         [Instruction(OP_PUSH, 0), Instruction(OP_NEG), Instruction(OP_HALT)], 0),
+        ("neg_negative",
+         [Instruction(OP_PUSH, -3), Instruction(OP_NEG), Instruction(OP_HALT)], 3),
+        ("neg_large",
+         [Instruction(OP_PUSH, 1000), Instruction(OP_NEG), Instruction(OP_HALT)], -1000),
+    ]
+
+    passed = 0
+    total = len(tests) * 2
+
+    for name, prog, expected in tests:
+        for label, executor in [("numpy", np_exec), ("torch", pt_exec)]:
+            trace = executor.execute(prog)
+            top = trace.steps[-1].top if trace.steps else None
+            ok = (top == expected)
+            if ok:
+                passed += 1
+            status = "PASS" if ok else "FAIL"
+            print(f"  {status}  {label:5s}  {name:20s}  expected={expected:>8}  got={top}")
+
+    # Verify traces match
+    trace_match = 0
+    for name, prog, _ in tests:
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        match, _ = compare_traces(np_trace, pt_trace)
+        if match:
+            trace_match += 1
+
+    print(f"\n  Unit tests: {passed}/{total} passed")
+    print(f"  Trace match: {trace_match}/{len(tests)} numpy==pytorch")
+    return passed == total and trace_match == len(tests)
+
+
+def test_select_unit():
+    """Unit tests for SELECT parametric op."""
+    print("\n" + "=" * 60)
+    print("Test: SELECT parametric op")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    tests = [
+        # SELECT: a b c → (c≠0 ? a : b)
+        # Stack: PUSH a (true), PUSH b (false), PUSH c (cond)
+        ("select_true",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 20),
+          Instruction(OP_PUSH, 1), Instruction(OP_SELECT),
+          Instruction(OP_HALT)], 10),
+        ("select_false",
+         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 20),
+          Instruction(OP_PUSH, 0), Instruction(OP_SELECT),
+          Instruction(OP_HALT)], 20),
+        ("select_nonzero_cond",
+         [Instruction(OP_PUSH, 100), Instruction(OP_PUSH, 200),
+          Instruction(OP_PUSH, 42), Instruction(OP_SELECT),
+          Instruction(OP_HALT)], 100),
+        ("select_neg_cond",
+         [Instruction(OP_PUSH, 5), Instruction(OP_PUSH, 9),
+          Instruction(OP_PUSH, -1), Instruction(OP_SELECT),
+          Instruction(OP_HALT)], 5),
+        ("select_same_values",
+         [Instruction(OP_PUSH, 7), Instruction(OP_PUSH, 7),
+          Instruction(OP_PUSH, 0), Instruction(OP_SELECT),
+          Instruction(OP_HALT)], 7),
+    ]
+
+    passed = 0
+    total = len(tests) * 2
+
+    for name, prog, expected in tests:
+        for label, executor in [("numpy", np_exec), ("torch", pt_exec)]:
+            trace = executor.execute(prog)
+            top = trace.steps[-1].top if trace.steps else None
+            ok = (top == expected)
+            if ok:
+                passed += 1
+            status = "PASS" if ok else "FAIL"
+            print(f"  {status}  {label:5s}  {name:20s}  expected={expected:>8}  got={top}")
+
+    trace_match = 0
+    for name, prog, _ in tests:
+        np_trace = np_exec.execute(prog)
+        pt_trace = pt_exec.execute(prog)
+        match, _ = compare_traces(np_trace, pt_trace)
+        if match:
+            trace_match += 1
+
+    print(f"\n  Unit tests: {passed}/{total} passed")
+    print(f"  Trace match: {trace_match}/{len(tests)} numpy==pytorch")
+    return passed == total and trace_match == len(tests)
+
+
+def test_unary_algorithms():
+    """Test algorithm generators using Chunk 4 ops."""
+    print("\n" + "=" * 60)
+    print("Test: Unary + parametric algorithm programs")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+
+    algos = [
+        # CLZ generators
+        ("clz(0)=32", *make_native_clz(0)),
+        ("clz(1)=31", *make_native_clz(1)),
+        ("clz(255)=24", *make_native_clz(255)),
+        ("clz(65536)=15", *make_native_clz(65536)),
+
+        # CTZ generators
+        ("ctz(0)=32", *make_native_ctz(0)),
+        ("ctz(1)=0", *make_native_ctz(1)),
+        ("ctz(8)=3", *make_native_ctz(8)),
+        ("ctz(1024)=10", *make_native_ctz(1024)),
+
+        # POPCNT generators
+        ("popcnt(0)=0", *make_native_popcnt(0)),
+        ("popcnt(255)=8", *make_native_popcnt(255)),
+        ("popcnt(7)=3", *make_native_popcnt(7)),
+
+        # ABS generators
+        ("abs(42)=42", *make_native_abs(42)),
+        ("abs(-7)=7", *make_native_abs(-7)),
+        ("abs(0)=0", *make_native_abs(0)),
+
+        # NEG generators
+        ("neg(5)=-5", *make_native_neg(5)),
+        ("neg(-3)=3", *make_native_neg(-3)),
+        ("neg(0)=0", *make_native_neg(0)),
+
+        # SELECT generators
+        ("select(10,20,1)=10", *make_select(10, 20, 1)),
+        ("select(10,20,0)=20", *make_select(10, 20, 0)),
+        ("select(5,9,-1)=5", *make_select(5, 9, -1)),
+
+        # Composite: select_max
+        ("max(10,25)=25", *make_select_max(10, 25)),
+        ("max(25,10)=25", *make_select_max(25, 10)),
+        ("max(7,7)=7", *make_select_max(7, 7)),
+
+        # Composite: log2_floor
+        ("log2(1)=0", *make_log2_floor(1)),
+        ("log2(8)=3", *make_log2_floor(8)),
+        ("log2(255)=7", *make_log2_floor(255)),
+        ("log2(1024)=10", *make_log2_floor(1024)),
+
+        # Composite: is_power_of_2
+        ("ispow2(1)=1", *make_is_power_of_2(1)),
+        ("ispow2(8)=1", *make_is_power_of_2(8)),
+        ("ispow2(7)=0", *make_is_power_of_2(7)),
+        ("ispow2(0)=0", *make_is_power_of_2(0)),
+        ("ispow2(1024)=1", *make_is_power_of_2(1024)),
+    ]
+
+    passed = 0
+    total = 0
+
+    for name, prog, expected in algos:
+        ok = test_algorithm(name, prog, expected, np_exec, pt_exec)
+        if ok:
+            passed += 1
+        total += 1
+
+    print(f"\n  Result: {passed}/{total} passed")
+    return passed == total
+
+
+def test_step_count_chunk4():
+    """Compare step counts: native POPCNT vs loop-based popcount."""
+    print("\n" + "=" * 60)
+    print("Test: Step count comparison (Chunk 4 ops)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+
+    comparisons = [
+        ("POPCNT(255)", make_native_popcnt(255), make_popcount_loop(255)),
+        ("POPCNT(1023)", make_native_popcnt(1023), make_popcount_loop(1023)),
+        ("POPCNT(7)", make_native_popcnt(7), make_popcount_loop(7)),
+    ]
+
+    all_faster = True
+    for label, (native_prog, native_exp), (loop_prog, loop_exp) in comparisons:
+        native_trace = np_exec.execute(native_prog)
+        loop_trace = np_exec.execute(loop_prog)
+        native_steps = len(native_trace.steps)
+        loop_steps = len(loop_trace.steps)
+        speedup = loop_steps / native_steps if native_steps > 0 else float('inf')
+
+        native_top = native_trace.steps[-1].top if native_trace.steps else None
+        loop_top = loop_trace.steps[-1].top if loop_trace.steps else None
+        correct = (native_top == native_exp and loop_top == loop_exp)
+        faster = native_steps < loop_steps
+
+        status = "PASS" if (correct and faster) else "FAIL"
+        if not (correct and faster):
+            all_faster = False
+        print(f"  {status}  {label:20s}  native={native_steps:>4} steps  "
+              f"loop={loop_steps:>4} steps  speedup={speedup:.0f}×  "
+              f"result={native_top}")
+
+    return all_faster
+
+
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
-    print("Phase 14: Extended ISA — Chunks 1-3: Arithmetic, Comparisons & Bitwise")
+    print("Phase 14: Extended ISA — Chunks 1-4: Arith, Cmp, Bitwise, Unary & Parametric")
     print("=" * 60)
     print(f"  Chunk 1 ops:   MUL, DIV_S, DIV_U, REM_S, REM_U")
     print(f"  Chunk 2 ops:   EQZ, EQ, NE, LT/GT/LE/GE_S/U")
     print(f"  Chunk 3 ops:   AND, OR, XOR, SHL, SHR_S, SHR_U, ROTL, ROTR")
+    print(f"  Chunk 4 ops:   CLZ, CTZ, POPCNT, ABS, NEG, SELECT")
     print(f"  Trap opcode:   OP_TRAP ({OP_TRAP}) — division by zero")
     print(f"  Total ISA:     {N_OPCODES} opcodes")
     print(f"  Architecture:  Linear + nonlinear FF dispatch")
@@ -2195,6 +2712,12 @@ def main():
     results.append(("Bitwise unit",        test_bitwise_unit()))
     results.append(("Bitwise algos",       test_bitwise_algorithms()))
 
+    # Chunk 4 tests (unary + parametric)
+    results.append(("Unary unit",          test_unary_unit()))
+    results.append(("SELECT unit",         test_select_unit()))
+    results.append(("Unary+param algos",   test_unary_algorithms()))
+    results.append(("Step count (Chunk4)", test_step_count_chunk4()))
+
     # Shared tests
     results.append(("Regression",          test_regression()))
     results.append(("Model summary",       test_model_summary()))
@@ -2216,10 +2739,12 @@ def main():
     print(f"\n  Time: {elapsed:.2f}s")
 
     if all_pass:
-        print(f"\n  ✓ Phase 14 Chunks 1-3 complete: {N_OPCODES}-opcode ISA")
+        print(f"\n  ✓ Phase 14 Chunks 1-4 complete: {N_OPCODES}-opcode ISA")
         print(f"    Arithmetic ops collapse O(n) repeated-op algorithms to O(1).")
         print(f"    Comparison ops enable native branching (max, abs, clamp).")
         print(f"    Bitwise ops enable bit manipulation (popcount, extract, masks).")
+        print(f"    Unary ops add CLZ/CTZ/POPCNT/ABS/NEG — O(1) bit inspection.")
+        print(f"    SELECT enables branchless ternary selection (sd=-2).")
         print(f"    Division by zero traps cleanly (OP_TRAP).")
         print(f"    Nonlinear FF dispatch extends the compiled transformer paradigm.")
         print(f"    All Phase 4/11/13 tests pass (full backward compatibility).")
