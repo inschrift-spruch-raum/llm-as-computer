@@ -42,9 +42,10 @@
 - **run_group** (f) `(label: str, tests: list, verbose: bool = False)` :130
 - **build_all_tests** (f) `()` :146
 - **build_tier2_tests** (f) `()` :259
-- **benchmark_mojo** (f) `(prog: list, n: int = 50)` :302
-- **benchmark_numpy** (f) `(prog: list, n: int = 50)` :314
-- **main** (f) `()` :328
+- **build_structured_tests** (f) `()` :300
+- **benchmark_mojo** (f) `(prog: list, n: int = 200)` :327
+- **benchmark_numpy** (f) `(prog: list, n: int = 50)` :347
+- **main** (f) `()` :361
 
 ## Other Files
 
