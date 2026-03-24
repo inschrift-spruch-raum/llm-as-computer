@@ -1,5 +1,5 @@
 # lac/
-*Files: 31*
+*Files: 32*
 
 ## Files
 
@@ -67,28 +67,29 @@
 
 ### executor.py
 > Imports: `torch, isa`
-- **NumPyExecutor** (C) :43
-  - **execute** (m) `(self, prog, max_steps=5000)` :49
-- **CompiledModel** (C) :313
-  - **__init__** (m) `(self, d_model=D_MODEL)` :332
-  - **_compile_weights** (m) `(self)` :349
-  - **forward** (m) `(self, query_emb, prog_embs, stack_embs)` :459
-- **TorchExecutor** (C) :570
-  - **__init__** (m) `(self, model=None)` :576
-  - **execute** (m) `(self, prog, max_steps=5000)` :580
+- **NumPyExecutor** (C) :45
+  - **execute** (m) `(self, prog, max_steps=5000)` :51
+- **CompiledModel** (C) :352
+  - **__init__** (m) `(self, d_model=D_MODEL)` :373
+  - **_compile_weights** (m) `(self)` :393
+  - **forward** (m) `(self, query_emb, prog_embs, stack_embs, local_embs=None)` :541
+- **TorchExecutor** (C) :672
+  - **__init__** (m) `(self, model=None)` :678
+  - **execute** (m) `(self, prog, max_steps=5000)` :682
 
 ### isa.py
 > Imports: `torch, typing, dataclasses`
-- **program** (f) `(*instrs)` :35
-- **CompiledAttentionHead** (C) :350
-  - **__init__** (m) `(self, d_model=D_MODEL, head_dim=2, v_dim=1, use_bias_q=False)` :364
-  - **forward** (m) `(self, query_emb, memory_embs)` :371
-- **embed_program_token** (f) `(pos, instr)` :399
-- **embed_stack_entry** (f) `(addr, value, write_order)` :414
-- **embed_state** (f) `(ip, sp)` :425
-- **compare_traces** (f) `(trace_a, trace_b)` :437
-- **test_algorithm** (f) `(name, prog, expected, np_exec, pt_exec, verbose=False)` :447
-- **test_trap_algorithm** (f) `(name, prog, np_exec, pt_exec, verbose=False)` :476
+- **program** (f) `(*instrs)` :36
+- **CompiledAttentionHead** (C) :372
+  - **__init__** (m) `(self, d_model=D_MODEL, head_dim=2, v_dim=1, use_bias_q=False)` :386
+  - **forward** (m) `(self, query_emb, memory_embs)` :393
+- **embed_program_token** (f) `(pos, instr)` :421
+- **embed_stack_entry** (f) `(addr, value, write_order)` :436
+- **embed_local_entry** (f) `(local_idx, value, write_order)` :447
+- **embed_state** (f) `(ip, sp)` :458
+- **compare_traces** (f) `(trace_a, trace_b)` :470
+- **test_algorithm** (f) `(name, prog, expected, np_exec, pt_exec, verbose=False)` :480
+- **test_trap_algorithm** (f) `(name, prog, np_exec, pt_exec, verbose=False)` :509
 
 ### phase10_digit_decomposition.py
 > Imports: `torch, torch.utils.data, random, time, json`...
@@ -312,6 +313,23 @@
 - **test_step_count_chunk4** (f) `()` :2645
 - **test_integration_chunk5** (f) `()` :2682
 - **main** (f) `()` :2803
+
+### phase15_local_variables.py
+> Imports: `sys, os, time, isa, executor`...
+- **test_set_and_get** (f) `()` :31
+- **test_swap_via_locals** (f) `()` :42
+- **test_tee** (f) `()` :59
+- **test_multiple_locals** (f) `()` :71
+- **test_overwrite** (f) `()` :98
+- **test_unset_local** (f) `()` :111
+- **test_tee_preserves_stack** (f) `()` :120
+- **test_locals_with_stack_ops** (f) `()` :130
+- **test_accumulator_loop** (f) `()` :145
+- **test_local_variables** (f) `()` :190
+- **test_regression** (f) `()` :213
+- **test_model_summary** (f) `()` :270
+- **test_invariants** (f) `()` :332
+- **main** (f) `()` :417
 
 ### phase1_hull_cache.py
 > Imports: `time, json`
