@@ -1,5 +1,5 @@
 """
-Phase 14: Extended ISA — Chunks 1-4: Arithmetic, Comparison, Bitwise, Unary & Parametric Operations
+Phase 14: Extended ISA — Chunks 1-5: Arithmetic, Comparison, Bitwise, Unary & Parametric Operations + Integration Tests
 
 Chunk 1 (Issue #11): 5 arithmetic opcodes:
   MUL   (13)  — a b → (a*b)
@@ -67,7 +67,7 @@ mechanism.
 
 Part of Issue #8 (Tier 1 ISA expansion).
   Chunk 1: Issue #11 (closed). Chunk 2: Issue #12. Chunk 3: Issue #13.
-  Chunk 4: Issue #14.
+  Chunk 4: Issue #14. Chunk 5: Issue #15 (integration tests).
 """
 
 import numpy as np
@@ -109,6 +109,8 @@ from phase13_isa_completeness import (
     N_OPCODES as N_OPCODES_P13,
     compare_traces, test_algorithm,
     make_fibonacci, make_power_of_2, make_sum_1_to_n,
+    make_multiply as make_multiply_p13,
+    make_is_even as make_is_even_p13,
     fib,
 )
 
@@ -2677,16 +2679,136 @@ def test_step_count_chunk4():
     return all_faster
 
 
+def test_integration_chunk5():
+    """Chunk 5 (Issue #15): Integration tests exercising new opcodes in combination.
+
+    Five canonical programs that span the full Tier 1 ISA, run on both NumPy
+    and PyTorch executors with trace-level match verification and step-count
+    comparison against Phase 13 equivalents where applicable.
+    """
+    print("\n" + "=" * 60)
+    print("Test: Chunk 5 Integration (Issue #15)")
+    print("=" * 60)
+
+    np_exec = Phase14Executor()
+    pt_exec = Phase14PyTorchExecutor()
+    p13_exec = Phase13Executor()
+
+    all_pass = True
+    step_comparisons = []
+
+    # ── Program 1: Native multiply 7 * 8 = 56 ──
+    print("\n  ── 1. Native multiply: 7 × 8 = 56 ──")
+    prog, expected = make_native_multiply(7, 8)
+    ok, steps = test_algorithm("native_mul(7,8)", prog, expected,
+                               np_exec, pt_exec, verbose=True)
+    if not ok: all_pass = False
+    # Compare with Phase 13 repeated addition
+    p13_prog, _ = make_multiply_p13(7, 8)
+    p13_trace = p13_exec.execute(p13_prog)
+    p13_steps = len(p13_trace.steps)
+    step_comparisons.append(("multiply(7,8)", steps, p13_steps))
+    print(f"         Steps: {steps} native vs {p13_steps} repeated-addition "
+          f"({p13_steps // steps}× speedup)")
+
+    # ── Program 2: Max of two numbers using GT_S + SELECT ──
+    print("\n  ── 2. Max of two numbers: max(10, 25) = 25 ──")
+    prog, expected = make_select_max(10, 25)
+    ok, steps = test_algorithm("select_max(10,25)", prog, expected,
+                               np_exec, pt_exec, verbose=True)
+    if not ok: all_pass = False
+    # Also test reversed and equal
+    for a, b in [(25, 10), (7, 7), (0, 100), (99, 1)]:
+        prog2, exp2 = make_select_max(a, b)
+        ok2, _ = test_algorithm(f"select_max({a},{b})", prog2, exp2,
+                                np_exec, pt_exec, verbose=True)
+        if not ok2: all_pass = False
+
+    # ── Program 3: is_even(42) → 1 ──
+    print("\n  ── 3. is_even(42) → 1 ──")
+    prog, expected = make_native_is_even(42)
+    ok, steps = test_algorithm("is_even(42)", prog, expected,
+                               np_exec, pt_exec, verbose=True)
+    if not ok: all_pass = False
+    # Compare with Phase 13 repeated subtraction approach
+    p13_prog, _ = make_is_even_p13(42)
+    p13_trace = p13_exec.execute(p13_prog)
+    p13_steps = len(p13_trace.steps)
+    step_comparisons.append(("is_even(42)", steps, p13_steps))
+    print(f"         Steps: {steps} native vs {p13_steps} repeated-subtraction "
+          f"({p13_steps // steps}× speedup)")
+
+    # Also test odd
+    prog_odd, exp_odd = make_native_is_even(43)
+    ok_odd, _ = test_algorithm("is_even(43)→odd", prog_odd, exp_odd,
+                               np_exec, pt_exec, verbose=True)
+    if not ok_odd: all_pass = False
+
+    # ── Program 4: Factorial(10) → 3628800 ──
+    print("\n  ── 4. Factorial(10) → 3628800 ──")
+    prog, expected = make_factorial(10)
+    ok, steps = test_algorithm("factorial(10)", prog, expected,
+                               np_exec, pt_exec, verbose=True)
+    if not ok: all_pass = False
+    step_comparisons.append(("factorial(10)", steps, None))
+    print(f"         Steps: {steps} (no Phase 13 equivalent — MUL required)")
+
+    # ── Program 5: Popcount(255) → 8 ──
+    print("\n  ── 5. Popcount(255) → 8 ──")
+    prog, expected = make_native_popcnt(255)
+    ok, steps = test_algorithm("popcnt(255)", prog, expected,
+                               np_exec, pt_exec, verbose=True)
+    if not ok: all_pass = False
+    # Compare with loop-based popcount
+    loop_prog, loop_exp = make_popcount_loop(255)
+    loop_trace = np_exec.execute(loop_prog)
+    loop_steps = len(loop_trace.steps)
+    step_comparisons.append(("popcnt(255)", steps, loop_steps))
+    print(f"         Steps: {steps} native vs {loop_steps} loop-based "
+          f"({loop_steps // steps}× speedup)")
+
+    # ── Phase 13 regression check ──
+    print("\n  ── Regression: Phase 13 algorithms on Phase 14 executor ──")
+    regression_cases = [
+        ("fib(10)",    make_fibonacci(10)),
+        ("pow2(5)",    make_power_of_2(5)),
+        ("sum(1..10)", make_sum_1_to_n(10)),
+    ]
+    for label, (rprog, rexp) in regression_cases:
+        np_trace = np_exec.execute(rprog)
+        pt_trace = pt_exec.execute(rprog)
+        match, detail = compare_traces(np_trace, pt_trace)
+        np_top = np_trace.steps[-1].top if np_trace.steps else None
+        pt_top = pt_trace.steps[-1].top if pt_trace.steps else None
+        ok = (np_top == rexp and pt_top == rexp and match)
+        if not ok: all_pass = False
+        status = "PASS" if ok else "FAIL"
+        print(f"  {status}  {label:20s}  expected={rexp:>10}  "
+              f"numpy={np_top}  torch={pt_top}  trace_match={'Y' if match else 'N'}")
+
+    # ── Step-count summary ──
+    print("\n  ── Step-count summary ──")
+    for label, native, old in step_comparisons:
+        if old is not None:
+            print(f"    {label:20s}  {native:>4} steps (was {old:>5})  "
+                  f"{old // native:>4}× fewer steps")
+        else:
+            print(f"    {label:20s}  {native:>4} steps (new — no prior equivalent)")
+
+    return all_pass
+
+
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
-    print("Phase 14: Extended ISA — Chunks 1-4: Arith, Cmp, Bitwise, Unary & Parametric")
+    print("Phase 14: Extended ISA — Chunks 1-5: Arith, Cmp, Bitwise, Unary, Parametric + Integration")
     print("=" * 60)
     print(f"  Chunk 1 ops:   MUL, DIV_S, DIV_U, REM_S, REM_U")
     print(f"  Chunk 2 ops:   EQZ, EQ, NE, LT/GT/LE/GE_S/U")
     print(f"  Chunk 3 ops:   AND, OR, XOR, SHL, SHR_S, SHR_U, ROTL, ROTR")
     print(f"  Chunk 4 ops:   CLZ, CTZ, POPCNT, ABS, NEG, SELECT")
+    print(f"  Chunk 5:       Integration tests (native mul, max, is_even, factorial, popcount)")
     print(f"  Trap opcode:   OP_TRAP ({OP_TRAP}) — division by zero")
     print(f"  Total ISA:     {N_OPCODES} opcodes")
     print(f"  Architecture:  Linear + nonlinear FF dispatch")
@@ -2718,6 +2840,9 @@ def main():
     results.append(("Unary+param algos",   test_unary_algorithms()))
     results.append(("Step count (Chunk4)", test_step_count_chunk4()))
 
+    # Chunk 5 tests (integration — Issue #15)
+    results.append(("Integration (Chunk5)", test_integration_chunk5()))
+
     # Shared tests
     results.append(("Regression",          test_regression()))
     results.append(("Model summary",       test_model_summary()))
@@ -2739,13 +2864,14 @@ def main():
     print(f"\n  Time: {elapsed:.2f}s")
 
     if all_pass:
-        print(f"\n  ✓ Phase 14 Chunks 1-4 complete: {N_OPCODES}-opcode ISA")
+        print(f"\n  ✓ Phase 14 Chunks 1-5 complete: {N_OPCODES}-opcode ISA")
         print(f"    Arithmetic ops collapse O(n) repeated-op algorithms to O(1).")
         print(f"    Comparison ops enable native branching (max, abs, clamp).")
         print(f"    Bitwise ops enable bit manipulation (popcount, extract, masks).")
         print(f"    Unary ops add CLZ/CTZ/POPCNT/ABS/NEG — O(1) bit inspection.")
         print(f"    SELECT enables branchless ternary selection (sd=-2).")
         print(f"    Division by zero traps cleanly (OP_TRAP).")
+        print(f"    Integration tests verify cross-opcode programs on both backends.")
         print(f"    Nonlinear FF dispatch extends the compiled transformer paradigm.")
         print(f"    All Phase 4/11/13 tests pass (full backward compatibility).")
     else:
