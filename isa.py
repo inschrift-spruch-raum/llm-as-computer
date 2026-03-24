@@ -27,7 +27,8 @@ class Instruction:
 
     def __repr__(self):
         name = OP_NAMES.get(self.op, f"?{self.op}")
-        if self.op == OP_PUSH:
+        if self.op in (OP_PUSH, OP_JZ, OP_JNZ,
+                        OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE):
             return f"{name} {self.arg}"
         return name
 
@@ -47,6 +48,7 @@ def program(*instrs) -> List[Instruction]:
         "SHL": 32, "SHR_S": 33, "SHR_U": 34, "ROTL": 35, "ROTR": 36,
         "CLZ": 37, "CTZ": 38, "POPCNT": 39, "ABS": 40, "NEG": 41,
         "SELECT": 42,
+        "LOCAL.GET": 43, "LOCAL.SET": 44, "LOCAL.TEE": 45,
     }
     for instr in instrs:
         if isinstance(instr, Instruction):
@@ -85,14 +87,16 @@ class Trace:
         lines.append("-" * 35)
         for i, s in enumerate(self.steps):
             name = OP_NAMES.get(s.op, "?")
-            instr_str = f"{name} {s.arg}" if s.op == OP_PUSH else name
+            instr_str = f"{name} {s.arg}" if s.op in (
+                OP_PUSH, OP_JZ, OP_JNZ, OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE
+            ) else name
             lines.append(f"{i:4d}  {instr_str:<10} {s.sp:3d}  {s.top:5d}")
         return "\n".join(lines)
 
 
 # ─── Constants ────────────────────────────────────────────────────
 
-D_MODEL = 36
+D_MODEL = 42
 DTYPE = torch.float64
 EPS = 1e-6
 
@@ -138,6 +142,14 @@ DIM_IS_LT       = 32   # shared by LT_S and LT_U
 DIM_IS_GT       = 33   # shared by GT_S and GT_U
 DIM_IS_LE       = 34   # shared by LE_S and LE_U
 DIM_IS_GE       = 35   # shared by GE_S and GE_U
+
+# Phase 15: local variables address space
+DIM_IS_LOCAL      = 36
+DIM_LOCAL_KEY_0   = 37
+DIM_LOCAL_KEY_1   = 38
+DIM_IS_LOCAL_GET  = 39
+DIM_IS_LOCAL_SET  = 40
+DIM_IS_LOCAL_TEE  = 41
 
 
 # ─── Opcodes ─────────────────────────────────────────────────────
@@ -198,10 +210,15 @@ OP_ABS    = 40
 OP_NEG    = 41
 OP_SELECT = 42
 
+# Phase 15: local variables
+OP_LOCAL_GET = 43
+OP_LOCAL_SET = 44
+OP_LOCAL_TEE = 45
+
 # Trap
 OP_TRAP  = 99
 
-N_OPCODES = 42  # 12 base + 5 arith + 11 cmp + 8 bitwise + 5 unary + 1 parametric
+N_OPCODES = 45  # 42 base + 3 local variable ops
 
 
 # ─── Maps ─────────────────────────────────────────────────────────
@@ -220,6 +237,7 @@ OP_NAMES = {
     OP_ROTL: "ROTL", OP_ROTR: "ROTR",
     OP_CLZ: "CLZ", OP_CTZ: "CTZ", OP_POPCNT: "POPCNT",
     OP_ABS: "ABS", OP_NEG: "NEG", OP_SELECT: "SELECT",
+    OP_LOCAL_GET: "LOCAL.GET", OP_LOCAL_SET: "LOCAL.SET", OP_LOCAL_TEE: "LOCAL.TEE",
     OP_TRAP: "TRAP",
 }
 
@@ -235,6 +253,9 @@ OPCODE_DIM_MAP = {
     OP_GT_S: DIM_IS_GT, OP_GT_U: DIM_IS_GT,
     OP_LE_S: DIM_IS_LE, OP_LE_U: DIM_IS_LE,
     OP_GE_S: DIM_IS_GE, OP_GE_U: DIM_IS_GE,
+    OP_LOCAL_GET: DIM_IS_LOCAL_GET,
+    OP_LOCAL_SET: DIM_IS_LOCAL_SET,
+    OP_LOCAL_TEE: DIM_IS_LOCAL_TEE,
 }
 
 OPCODE_IDX = {
@@ -249,6 +270,7 @@ OPCODE_IDX = {
     OP_SHL: 31, OP_SHR_S: 32, OP_SHR_U: 33, OP_ROTL: 34, OP_ROTR: 35,
     OP_CLZ: 36, OP_CTZ: 37, OP_POPCNT: 38, OP_ABS: 39, OP_NEG: 40,
     OP_SELECT: 41,
+    OP_LOCAL_GET: 42, OP_LOCAL_SET: 43, OP_LOCAL_TEE: 44,
 }
 
 NONLINEAR_OPS = {
@@ -417,6 +439,17 @@ def embed_stack_entry(addr, value, write_order):
     emb[DIM_IS_STACK]     = 1.0
     emb[DIM_STACK_KEY_0]  = 2.0 * addr
     emb[DIM_STACK_KEY_1]  = -float(addr * addr) + EPS * write_order
+    emb[DIM_VALUE]        = float(value)
+    emb[DIM_ONE]          = 1.0
+    return emb
+
+
+def embed_local_entry(local_idx, value, write_order):
+    """Create embedding for a local variable write record."""
+    emb = torch.zeros(D_MODEL, dtype=DTYPE)
+    emb[DIM_IS_LOCAL]     = 1.0
+    emb[DIM_LOCAL_KEY_0]  = 2.0 * local_idx
+    emb[DIM_LOCAL_KEY_1]  = -float(local_idx * local_idx) + EPS * write_order
     emb[DIM_VALUE]        = float(value)
     emb[DIM_ONE]          = 1.0
     return emb
