@@ -10,5 +10,9 @@
         ]
       }
     ]
-  }
+  },
+  "skills": [
+    "/mnt/skills/user/coding-mojo/SKILL.md",
+    "/mnt/skills/user/mojo-syntax/SKILL.md"
+  ]
 }
