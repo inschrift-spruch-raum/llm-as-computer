@@ -192,6 +192,22 @@ Read phase13 (entire file) → "Now I have the full picture"
 
 When multiple files need reading, batch them into a single tool call where possible. The goal is to front-load context acquisition and minimize round-trips between reading and doing.
 
+### Environment Setup
+
+Use `uv` for dependency installation — it's pre-installed in Claude Code environments and 10-50× faster than pip.
+
+```bash
+uv pip install -r requirements.txt --system
+```
+
+The `--system` flag installs into the system Python (required in containers where venv creation is unnecessary). If `uv` is not available, fall back to:
+
+```bash
+pip install -r requirements.txt --break-system-packages
+```
+
+**Do not pin exact versions.** This is a research repo; loose lower bounds (`>=`) in requirements.txt avoid unnecessary breakage across environments.
+
 ### Container Constraints
 - Claude.ai containers: ~200s bash timeout, ~15 min session limit, 8GB RAM
 - CCotw (Claude Code on the web): 600s bash timeout, longer sessions, 16GB RAM — better for compute
