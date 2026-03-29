@@ -146,6 +146,6 @@ benchmark_scaling.py    Million-step scaling benchmarks (Issue #52)
 ### Other
 ```
 WRITEUP.md              → Links to published blog posts
-CLAUDE.md               Project instructions for Claude Code
+AGENTS.md               Project instructions for OpenCode
 viz/                    React visualizations
 ```

@@ -8,7 +8,7 @@
 
 ## Files
 
-### CLAUDE.md
+### AGENTS.md
 - LLM-as-Computer `h1` :1
 - Muninn Boot `h2` :5
 - Project Context `h2` :33
