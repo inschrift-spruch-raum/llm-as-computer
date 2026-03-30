@@ -117,15 +117,15 @@ print(f"一致: {match}, 详情: {detail}")
 ```python
 from llm_as_computer.executor import CompiledModel
 
-model = CompiledModel(d_model=36)
+model = CompiledModel(d_model=51)
 model.eval()
 ```
 
-#### \_\_init\_\_(d_model=36)
+#### \_\_init\_\_(d_model=51)
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `d_model` | `int` | 模型维度，默认 36（由 `D_MODEL` 常量定义） |
+| `d_model` | `int` | 模型维度，默认 51（由 `D_MODEL` 常量定义） |
 
 初始化时立即调用 `_compile_weights()`，完成全部权重的解析赋值。模型包含以下组件：
 
@@ -276,11 +276,11 @@ output = V[argmax(scores)]       → (v_dim,)
 
 使用 2D 抛物线键空间：`k = (2j, -j²)`，点积注意力在目标位置产生尖锐峰值。
 
-#### \_\_init\_\_(d_model=36, head_dim=2, v_dim=1, use_bias_q=False)
+#### \_\_init\_\_(d_model=51, head_dim=2, v_dim=1, use_bias_q=False)
 
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `d_model` | `int` | 36 | 模型维度 |
+| `d_model` | `int` | 51 | 模型维度 |
 | `head_dim` | `int` | 2 | 注意力头维度（抛物线键空间需要 2 维） |
 | `v_dim` | `int` | 1 | 值维度 |
 | `use_bias_q` | `bool` | False | 查询投影是否使用偏置 |
@@ -434,7 +434,7 @@ class TraceStep:
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `D_MODEL` | 36 | 模型维度 |
+| `D_MODEL` | 51 | 模型维度 |
 | `DTYPE` | `torch.float64` | 数值精度（强制 float64） |
 | `EPS` | `1e-6` | PyTorch 精度常量（近次编码用） |
 | `N_OPCODES` | 55 | ISA 操作码数量（不含 TRAP） |

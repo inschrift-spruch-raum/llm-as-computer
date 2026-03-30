@@ -1,7 +1,7 @@
 # LLM-as-Computer
 
-**Generated:** 2026-03-29
-**Commit:** adda013
+**Generated:** 2026-03-30
+**Commit:** 705f51a
 **Branch:** main
 
 Compiled transformer executor — programs run inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head. The transformer *is* the computer. 55-opcode WASM-style ISA, Python backends (PyTorch primary, NumPy reference).
@@ -39,7 +39,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 |------|----------|-------|
 | Add an opcode | `src/llm_as_computer/isa.py` + `executor.py` | Must update both NumPyExecutor AND CompiledModel |
 | Write a test program | `src/llm_as_computer/programs.py` | Follow `make_*` pattern, add to test runner |
-| Understand an embedding | `src/llm_as_computer/isa.py` → `embed_*` functions | Line 733+ |
+| Understand an embedding | `src/llm_as_computer/isa.py` → `embed_*` functions | After line 730; see DIM layout at line 114 |
 | Debug execution trace | `src/llm_as_computer/isa.py` → `compare_traces()` | Step-by-step diff |
 | Add structured control flow | `src/llm_as_computer/assembler.py` | WASM-style block/loop/if/br |
 | Parse WAT text | `src/llm_as_computer/wat_parser.py` | Handles full WAT syntax |
@@ -47,7 +47,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 
 ## ARCHITECTURE
 
-**Current state (Phase 14+):** d_model=36, head_dim=2, 55 opcodes, ~964 compiled parameters. Float64 mandatory. Hard-max attention (argmax, NEVER softmax).
+**Current state (Phase 20):** d_model=51, head_dim=2, 55 opcodes. Float64 mandatory. Hard-max attention (argmax, NEVER softmax). 51 embedding dims: 3 type markers + 2×5 parabolic key pairs (prog/stack/local/heap/call) + 24 opcode flags + 4 state dims (IP/SP/OPCODE/VALUE) + DIM_ONE + local/heap/call flags + call value dims (ret_addr/saved_sp/locals_base).
 
 **Two backends:**
 - **PyTorch (primary):** `TorchExecutor` wraps `CompiledModel` (nn.Module). This is the main execution backend.
