@@ -1,6 +1,6 @@
 # llm-as-computer 文档
 
-> 编译型 transformer 执行器, 程序在 transformer 自身的推理循环中运行。每条指令获取和内存读取都是一个抛物线注意力头。transformer **就是** 计算机。55 操作码 WASM 风格 ISA, Python + Mojo 后端。
+> 编译型 transformer 执行器, 程序在 transformer 自身的推理循环中运行。每条指令获取和内存读取都是一个抛物线注意力头。transformer **就是** 计算机。55 操作码 WASM 风格 ISA, Python 后端 (PyTorch/NumPy)。
 
 本项目独立验证了 [Percepta 的声明](https://percepta.ai/blog/can-llms-be-computers): 通过 2D 凸包注意力实现 O(log t) 的每步解码, transformer 能够执行任意程序。经过 20 个研究阶段的探索, 核心结论是"编译而非训练", 将执行逻辑直接编译到 transformer 权重中可获得 100% 的正确执行率。
 
@@ -13,9 +13,8 @@
 | 编译参数量 | ~964 |
 | 注意力机制 | Hard-max (argmax), 禁止 softmax |
 | 数值精度 | Float64 (强制) |
-| 后端 | Python (NumPy/PyTorch) + Mojo |
+| 后端 | Python (PyTorch/NumPy) |
 | 研究阶段 | 20 个, 全部完成 |
-| Mojo 执行速度 | 67-126M steps/sec |
 | Python 执行速度 | 2.1-3.1M steps/sec |
 
 ## 文档导航

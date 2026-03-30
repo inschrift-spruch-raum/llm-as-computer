@@ -25,7 +25,7 @@ Full documentation is in the [docs/](docs/) directory:
 
 ## Benchmark Results
 
-Million-step benchmarks validating the executor at scale: [Issue #52](https://github.com/oaustegard/llm-as-computer/issues/52#issuecomment-2752773503). Key numbers: Mojo backend at **67–126M steps/sec**, Python at **2.1–3.1M steps/sec**, 1.2M steps in 17ms (Mojo) or 561ms (Python).
+Million-step benchmarks validating the executor at scale: [Issue #52](https://github.com/oaustegard/llm-as-computer/issues/52#issuecomment-2752773503). Key numbers: Python at **2.1–3.1M steps/sec**, 1.2M steps in 561ms.
 
 ## ISA Reference
 
@@ -136,30 +136,12 @@ src/llm_as_computer/c_pipeline.py C → WAT → ISA compilation pipeline
 
 ### Tests
 ```
-tests/test_consolidated.py    Integration tests (NumPy/PyTorch equivalence)
+tests/test_consolidated.py    Executor correctness + dual-backend consistency tests
 tests/test_wat_parser.py      WAT parser test suite
-```
-
-### Mojo Backend (`src/`)
-```
-executor.mojo           Mojo port of the full 55-opcode executor
-benchmark.py            Mojo vs NumPy micro-benchmarks
-benchmarks.py           Substantial benchmark programs (FNV-1a, bubble sort, primes)
-llm_vs_native.py        Honest comparison: LLM-executor vs native Python
-run_mojo_tests.py       Mojo executor test runner
-```
-
-### Development (`dev/`)
-```
-phases/                 Phase exploration scripts (1–20) and result JSON
-FINDINGS.md             Detailed per-phase findings
-RD-PLAN.md              Original R&D plan and evolution
-benchmark_scaling.py    Million-step scaling benchmarks (Issue #52)
 ```
 
 ### Other
 ```
 docs/                   Full documentation (quickstart, architecture, ISA ref)
 AGENTS.md               Project instructions for OpenCode
-viz/                    React visualizations
 ```

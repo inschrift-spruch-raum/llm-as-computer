@@ -193,7 +193,7 @@ prog = [
     Instruction(OP_SUB),            # 6: n - 1
     Instruction(OP_DUP),            # 7: 复制用于判断
     # 这里简化展示; 完整实现需要 LT_S 或条件跳转
-    # 实际完整版见 dev/phases/phase17_function_calls.py
+    # 实际完整版见 programs.py 中的 make_factorial()
     Instruction(OP_RETURN),         # 8
 ]
 
@@ -225,7 +225,7 @@ prog = [
     Instruction(OP_PUSH, 0),
     Instruction(OP_LOCAL_SET, 0),      # pass = 0
     # ... 外层和内层循环省略 (完整版 62 条指令)
-    # 见 dev/phases/phase18_integration_tests.py → test_bubble_sort_3()
+    # 完整版见 programs.py 中的 make_bubble_sort()
 
     # 结果: 读 mem[0]
     Instruction(OP_PUSH, 0),

@@ -1,17 +1,10 @@
-"""Equivalence tests: verify consolidated modules match phase14 behavior exactly.
+"""Executor correctness tests: verify NumPy and PyTorch backends produce expected results.
 
-Imports ONLY from the new modules (isa, executor, programs).
-Cross-validates against old Phase14Executor and Phase14PyTorchExecutor.
+Imports from the core package (llm_as_computer).
+Cross-validates NumPy vs PyTorch traces for internal consistency.
 """
 
-import sys
-import os
-
 import pytest
-
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dev", "phases")
-)
 
 from llm_as_computer.isa import (
     Instruction,
@@ -94,12 +87,6 @@ from llm_as_computer.programs import (
     fib,
 )
 
-# Cross-validation imports from old phase files
-from phase14_extended_isa import (
-    Phase14Executor,
-    Phase14PyTorchExecutor,
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -114,16 +101,6 @@ def np_exec():
 @pytest.fixture
 def pt_exec():
     return TorchExecutor()
-
-
-@pytest.fixture
-def old_np_exec():
-    return Phase14Executor()
-
-
-@pytest.fixture
-def old_pt_exec():
-    return Phase14PyTorchExecutor()
 
 
 # ---------------------------------------------------------------------------
@@ -395,85 +372,52 @@ def _id_fn(val):
 
 
 @pytest.mark.parametrize("name,prog,expected", list(_phase4_tests()), ids=_id_fn)
-def test_numpy_phase4(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase4(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase11_extended(), ids=_id_fn)
-def test_numpy_phase11(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase11(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase13_algos_numpy(), ids=_id_fn)
-def test_numpy_phase13(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase13(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase14_arith(), ids=_id_fn)
-def test_numpy_phase14_arith(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase14_arith(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase14_cmp(), ids=_id_fn)
-def test_numpy_phase14_cmp(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase14_cmp(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase14_bit(), ids=_id_fn)
-def test_numpy_phase14_bit(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase14_bit(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase14_unary(), ids=_id_fn)
-def test_numpy_phase14_unary(old_np_exec, np_exec, name, prog, expected):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_numpy_phase14_unary(np_exec, name, prog, expected):
+    trace = np_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog", _trap_progs_numpy(), ids=_id_fn)
-def test_numpy_trap(old_np_exec, np_exec, name, prog):
-    old_trace = old_np_exec.execute(prog)
-    new_trace = np_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    old_trapped = old_trace.steps and old_trace.steps[-1].op == OP_TRAP
-    new_trapped = new_trace.steps and new_trace.steps[-1].op == OP_TRAP
-    assert old_trapped, f"Old executor did not trap"
-    assert new_trapped, f"New executor did not trap"
+def test_numpy_trap(np_exec, name, prog):
+    trace = np_exec.execute(prog)
+    trapped = trace.steps and trace.steps[-1].op == OP_TRAP
+    assert trapped, f"Executor did not trap"
 
 
 # ---------------------------------------------------------------------------
@@ -482,45 +426,28 @@ def test_numpy_trap(old_np_exec, np_exec, name, prog):
 
 
 @pytest.mark.parametrize("name,prog,expected", list(_phase4_tests()), ids=_id_fn)
-def test_torch_phase4(old_pt_exec, pt_exec, name, prog, expected):
-    old_trace = old_pt_exec.execute(prog)
-    new_trace = pt_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_torch_phase4(pt_exec, name, prog, expected):
+    trace = pt_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase13_algos_torch(), ids=_id_fn)
-def test_torch_phase13(old_pt_exec, pt_exec, name, prog, expected):
-    old_trace = old_pt_exec.execute(prog)
-    new_trace = pt_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_torch_phase13(pt_exec, name, prog, expected):
+    trace = pt_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog,expected", _phase14_torch(), ids=_id_fn)
-def test_torch_phase14(old_pt_exec, pt_exec, name, prog, expected):
-    old_trace = old_pt_exec.execute(prog)
-    new_trace = pt_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    assert old_trace.steps[-1].top == expected
-    assert new_trace.steps[-1].top == expected
+def test_torch_phase14(pt_exec, name, prog, expected):
+    trace = pt_exec.execute(prog)
+    assert trace.steps[-1].top == expected
 
 
 @pytest.mark.parametrize("name,prog", _trap_progs_torch(), ids=_id_fn)
-def test_torch_trap(old_pt_exec, pt_exec, name, prog):
-    old_trace = old_pt_exec.execute(prog)
-    new_trace = pt_exec.execute(prog)
-    match, detail = compare_traces(old_trace, new_trace)
-    assert match, f"Trace mismatch: {detail}"
-    old_trapped = old_trace.steps and old_trace.steps[-1].op == OP_TRAP
-    new_trapped = new_trace.steps and new_trace.steps[-1].op == OP_TRAP
-    assert old_trapped, f"Old executor did not trap"
-    assert new_trapped, f"New executor did not trap"
+def test_torch_trap(pt_exec, name, prog):
+    trace = pt_exec.execute(prog)
+    trapped = trace.steps and trace.steps[-1].op == OP_TRAP
+    assert trapped, f"Executor did not trap"
 
 
 # ---------------------------------------------------------------------------

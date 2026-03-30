@@ -4,40 +4,30 @@
 **Commit:** adda013
 **Branch:** main
 
-Compiled transformer executor — programs run inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head. The transformer *is* the computer. 55-opcode WASM-style ISA, Python + Mojo backends.
+Compiled transformer executor — programs run inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head. The transformer *is* the computer. 55-opcode WASM-style ISA, Python backends (PyTorch primary, NumPy reference).
 
 ## STRUCTURE
 
 ```
 ./
 ├── src/
-│   ├── llm_as_computer/    # Python package (pip installable)
-│   │   ├── __init__.py
-│   │   ├── isa.py          # 55 opcodes, TokenVocab, embeddings, CompiledAttentionHead
-│   │   ├── executor.py     # NumPyExecutor, CompiledModel (PyTorch nn.Module), TorchExecutor
-│   │   ├── programs.py     # Test programs + algorithm generators (fib, mul, gcd, etc.)
-│   │   ├── assembler.py    # WASM-style structured control flow → flat ISA compiler
-│   │   ├── wat_parser.py   # WebAssembly text format parser
-│   │   └── c_pipeline.py   # C → WAT → ISA compilation (requires clang + wasm2wat)
-│   ├── executor.mojo       # Mojo backend
-│   ├── benchmarks.py       # Benchmark programs
-│   ├── benchmark.py        # Benchmark runner
-│   ├── llm_vs_native.py    # LLM vs native comparison
-│   └── run_mojo_tests.py   # Mojo test runner
+│   └── llm_as_computer/    # Python package (pip installable)
+│       ├── __init__.py
+│       ├── isa.py          # 55 opcodes, TokenVocab, embeddings, CompiledAttentionHead
+│       ├── executor.py     # NumPyExecutor, CompiledModel (PyTorch nn.Module), TorchExecutor
+│       ├── programs.py     # Test programs + algorithm generators (fib, mul, gcd, etc.)
+│       ├── assembler.py    # WASM-style structured control flow → flat ISA compiler
+│       ├── wat_parser.py   # WebAssembly text format parser
+│       └── c_pipeline.py   # C → WAT → ISA compilation (requires clang + wasm2wat)
 ├── tests/
-│   ├── test_consolidated.py # Integration tests (NumPy/PyTorch equivalence)
+│   ├── test_consolidated.py # Executor correctness + dual-backend consistency tests
 │   └── test_wat_parser.py   # WAT parser test suite
-├── dev/
-│   ├── phases/             # 20 phase exploration scripts (1–20) + result JSONs
-│   ├── FINDINGS.md         # Detailed per-phase findings
-│   └── RD-PLAN.md          # R&D plan with status
 ├── docs/
 │   ├── architecture/       # overview.md, memory-model.md, compilation.md
 │   ├── isa/                # index.md, opcodes.md
 │   ├── guides/             # how-it-works.md, writing-programs.md
 │   ├── development/        # findings-summary.md, rd-plan-summary.md
 │   └── reference/          # api.md, file-map.md
-├── examples/               # Hungarian algorithm, Sudoku solver
 ├── pyproject.toml          # uv project config (src/ layout, hatchling build)
 ├── uv.lock                 # Reproducible dependency lockfile
 └── .python-version         # Python 3.14
@@ -53,13 +43,15 @@ Compiled transformer executor — programs run inside a transformer's own infere
 | Debug execution trace | `src/llm_as_computer/isa.py` → `compare_traces()` | Step-by-step diff |
 | Add structured control flow | `src/llm_as_computer/assembler.py` | WASM-style block/loop/if/br |
 | Parse WAT text | `src/llm_as_computer/wat_parser.py` | Handles full WAT syntax |
-| Run benchmarks | `dev/benchmark_scaling.py` or `src/benchmarks.py` | Mojo vs Python |
-| Find phase findings | `dev/FINDINGS.md` | Comprehensive per-phase analysis |
-| Read documentation | `docs/` | Start with `docs/quickstart.md` or `docs/guides/how-it-works.md` |
+| Read documentation | `docs/` | Start with `docs/guides/how-it-works.md` |
 
 ## ARCHITECTURE
 
 **Current state (Phase 14+):** d_model=36, head_dim=2, 55 opcodes, ~964 compiled parameters. Float64 mandatory. Hard-max attention (argmax, NEVER softmax).
+
+**Two backends:**
+- **PyTorch (primary):** `TorchExecutor` wraps `CompiledModel` (nn.Module). This is the main execution backend.
+- **NumPy (reference/demo):** `NumPyExecutor` provides equivalent execution in pure NumPy. Used for verification and as a reference implementation.
 
 **Five memory spaces** addressed by separate attention heads:
 - Program memory (opcode + arg fetch)
@@ -98,7 +90,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 | 19 | phase19_structured_assembler.py | Complete | Block/loop/if/br/br_table structured control flow |
 | 20 | phase20_type_masking_tests.py | Complete | i32 overflow masking (WASM semantics) |
 
-**Detailed findings:** `dev/FINDINGS.md` (632 lines). **Core conclusion:** Compile, don't train. Phases 5-10 proved gradient descent cannot learn true addition (a+b, a≠b) in multi-task context. Phases 11-20 proved compilation into weights gives 100% correct execution including arithmetic, branching, function calls, and heap memory.
+**Core conclusion:** Compile, don't train. Phases 5-10 proved gradient descent cannot learn true addition (a+b, a≠b) in multi-task context. Phases 11-20 proved compilation into weights gives 100% correct execution including arithmetic, branching, function calls, and heap memory. Detailed findings documented in `docs/development/findings-summary.md`.
 
 ## ANTI-PATTERNS (THIS PROJECT)
 
@@ -106,18 +98,16 @@ Compiled transformer executor — programs run inside a transformer's own infere
 - **NEVER train the compiled model** — All weights set analytically via `_compile_weights()`. Training path (Phases 5-10) was a productive wrong turn.
 - **NEVER use float32 for compiled models** — Float64 mandatory for parabolic addressing correctness. Score values scale as `addr²`; float32 limit ~4K indices.
 - **NEVER suppress type errors** — No `as any`, `@ts-ignore`, `# type: ignore`.
-- **NEVER batch file changes** — Commit and push after EVERY write. Sessions die without warning.
-- **NEVER read large files blind** — Use `docs/reference/api.md` as function index, then targeted line-range reads. `executor.py` (~1070 lines) is the main trap.
+- **NEVER read large files blind** — Use `docs/reference/api.md` as function index, then targeted line-range reads. `executor.py` (~1360 lines) is the main trap.
 - **Do NOT pin exact dependency versions** — Research repo; use `>=` lower bounds.
 - **Do NOT use bare module imports** — Always `from llm_as_computer.X import ...`, never `from isa import ...`.
 
 ## CONVENTIONS
 
 - **pytest** — Test suite uses pytest with parametrized tests and fixtures. `uv run pytest tests/ -v` to run all.
-- **Dual-executor validation** — Every test must verify NumPyExecutor AND TorchExecutor produce identical traces via `compare_traces()`.
+- **Dual-executor validation** — Consistency tests verify NumPyExecutor AND TorchExecutor produce identical traces via `compare_traces()`.
 - **i32 overflow semantics** — All arithmetic applies `result & 0xFFFFFFFF` (WASM standard). `PUSH 0xFFFFFFFF; PUSH 1; ADD` → `0`.
 - **TRAP for runtime errors** — Division by zero, stack underflow emit OP_TRAP (opcode 99), not Python exceptions.
-- **Phase files are standalone** — Each `phaseN_*.py` is self-contained with its own test harness. Run directly with `uv run dev/phases/phaseN_*.py`.
 - **Self-referencing EPS values** — NumPy executors use `eps=1e-10`; PyTorch uses `EPS=1e-6` from isa.py. These are different by design (different precision contexts).
 - **Recency bias in addressing** — `eps * write_count` term ensures later writes at same address win. Architectural feature, not a hack.
 
@@ -130,14 +120,8 @@ uv sync
 # Install with dev tools
 uv sync --group dev
 
-# Run integration tests
+# Run tests
 uv run pytest tests/ -v
-
-# Run individual phase
-uv run dev/phases/phase14_extended_isa.py
-
-# Run Mojo tests (if available)
-uv run src/run_mojo_tests.py
 
 # Lint
 uv run ruff check .
@@ -151,8 +135,4 @@ uv sync --locked
 - **Project configuration:** `package = true` in `[tool.uv]` with src/ layout. Build backend: hatchling. `uv sync` installs the package in editable mode.
 - **Lockfile:** `uv.lock` is committed for reproducible dependency resolution. Run `uv sync` to install from lockfile.
 - **File reading:** Start with `docs/reference/api.md` for function-level indexing, or `docs/reference/file-map.md` for file-level navigation. For files >500 lines, use index-then-target pattern.
-- **Environment:** `uv sync` at session start installs all dependencies and the package. Mojo available via `/mnt/skills/user/llm-as-computer/`.
-- **Container limits:** ~200s bash timeout, ~15 min session, 8GB RAM. Desktop: longer sessions, 16GB RAM.
-- **Phase file imports:** Phase files 15-20 use `from llm_as_computer.X import ...` for core modules. Inter-phase imports (e.g., phase14 → phase4) use `sys.path.insert` for bare module names within `dev/phases/`. `tests/test_consolidated.py` imports `phase14_extended_isa` via `sys.path` — changing phase14 breaks integration tests.
 - **C pipeline dependencies:** Requires `clang` with wasm32 target support + `wasm2wat`. Raises `EnvironmentError` if missing.
-- **Recall tags:** `recall("llm-as-computer", n=10)` or `recall("percepta", n=5)`.

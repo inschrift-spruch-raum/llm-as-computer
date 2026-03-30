@@ -25,12 +25,11 @@ uv sync
 ### 可选依赖
 
 - **C 编译管道**（`c_pipeline.py`）需要 `clang`（带 wasm32 目标支持）和 `wasm2wat`。缺少这些工具时该模块会抛出 `EnvironmentError`，不影响其他功能。
-- **Mojo 后端**（`src/`）需要 Mojo 编译器。
 
 ### 验证安装
 
 ```bash
-# 运行集成测试，确认一切正常
+# 运行测试，确认一切正常
 uv run pytest tests/ -v
 ```
 
@@ -38,19 +37,22 @@ uv run pytest tests/ -v
 
 ### 项目结构
 
-这是一个扁平模块项目。没有包，没有 `__init__.py`。所有核心模块平铺在根目录：
+这是一个 `src/` 布局的 Python 包项目。核心代码位于 `src/llm_as_computer/`：
 
 ```
-isa.py          ← 55 个操作码、TokenVocab、嵌入函数
-executor.py     ← NumPyExecutor、CompiledModel、TorchExecutor
-programs.py     ← 测试程序生成器（fib、mul、gcd 等）
-assembler.py    ← WASM 风格结构化控制流编译器
-wat_parser.py   ← WebAssembly 文本格式解析器
+src/llm_as_computer/
+├── __init__.py
+├── isa.py          ← 55 个操作码、TokenVocab、嵌入函数、CompiledAttentionHead
+├── executor.py     ← NumPyExecutor（参考/演示后端）、CompiledModel（PyTorch nn.Module）、TorchExecutor（PyTorch 主后端）
+├── programs.py     ← 测试程序生成器（fib、mul、gcd 等 30+ 个 make_* 函数）
+├── assembler.py    ← WASM 风格结构化控制流编译器（block/loop/if/br → 扁平 ISA）
+├── wat_parser.py   ← WebAssembly 文本格式解析器
+└── c_pipeline.py   ← C → WAT → ISA 编译管线
 ```
 
-导入链：`isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`
+导入链：`isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`。包内使用相对导入（`from .isa import ...`），外部使用 `from llm_as_computer.X import ...`。
 
-修改某个模块时注意下游依赖。`tests/test_consolidated.py` 直接导入 `phase14_extended_isa`，改动 phase 文件可能破坏集成测试。
+修改某个模块时注意下游依赖。
 
 ### 浮点精度：强制 Float64
 
@@ -112,63 +114,29 @@ numpy==1.24.3
 
 ## 测试要求
 
-### 手写测试框架
+### 测试框架
 
-本项目不使用 pytest、unittest 或任何测试框架。所有测试都是手写的 `main()` 函数，使用 pass/fail 计数器。
-
-```python
-def main():
-    passed = 0
-    failed = 0
-    
-    # 你的测试
-    if some_condition:
-        print(f"  PASS: test description")
-        passed += 1
-    else:
-        print(f"  FAIL: test description")
-        failed += 1
-    
-    print(f"\n{passed} passed, {failed} failed")
-    return failed == 0
-
-if __name__ == "__main__":
-    main()
-```
-
-### 双执行器验证
-
-每条测试必须同时验证 **NumPyExecutor** 和 **TorchExecutor** 的输出一致。使用 `isa.py` 中的 `compare_traces()` 函数进行逐步对比。
-
-```python
-from llm_as_computer.isa import compare_traces
-
-np_trace = np_executor.run(program)
-torch_trace = torch_executor.run(program)
-
-if not compare_traces(np_trace, torch_trace):
-    print("FAIL: NumPy and PyTorch traces differ")
-```
-
-### 运行测试
+使用 pytest，配合参数化测试和 fixture。测试位于 `tests/` 目录。
 
 ```bash
 # 运行全部测试
 uv run pytest tests/ -v
 ```
 
-阶段文件（`phaseN_*.py`）是自包含的，各自带测试工具。可以直接运行。
+### 双执行器验证
+
+一致性测试通过 `compare_traces()` 验证 **NumPyExecutor** 和 **TorchExecutor** 产生完全一致的执行轨迹。PyTorch 是主后端，NumPy 作为参考/演示实现。
 
 ### 添加新操作码
 
 需要同时更新两个文件：
 
-1. `isa.py`：操作码定义 + TokenVocab
-2. `executor.py`：NumPyExecutor 的分派逻辑 + CompiledModel 的编译逻辑
+1. `src/llm_as_computer/isa.py`：操作码定义 + TokenVocab
+2. `src/llm_as_computer/executor.py`：NumPyExecutor 的分派逻辑 + CompiledModel 的编译逻辑
 
 ### 添加测试程序
 
-在 `programs.py` 中遵循 `make_*` 命名模式，然后加入测试运行器。
+在 `src/llm_as_computer/programs.py` 中遵循 `make_*` 命名模式，然后加入测试。
 
 ## 提交规范
 
@@ -186,11 +154,6 @@ uv run pytest tests/ -v
 
 每次写入文件后立即提交。会话随时可能中断，不要积攒改动。
 
-```bash
-git add isa.py
-git commit -m "添加 POPCNT 操作码"
-```
-
 ## 禁止事项
 
 | 禁止 | 原因 |
@@ -199,22 +162,20 @@ git commit -m "添加 POPCNT 操作码"
 | 训练已编译模型 | 所有权重通过 `_compile_weights()` 解析设定。Phase 5-10 已证明梯度下降无法学到真正的加法 |
 | 使用 float32 | 抛物线地址编码在 float32 下只支持约 4K 索引 |
 | 抑制类型错误 | 不允许 `# type: ignore`、`@ts-ignore` |
-| 添加 `__init__.py` | 扁平模块结构，不是 Python 包 |
 | 批量攒改动后提交 | 每次写入后提交，会话可能随时中断 |
-| 盲读大文件 | 先看 `_MAP.md` 获取行号索引，再定向读取。`executor.py` 约 1070 行，不要从头读到尾 |
+| 盲读大文件 | 先看 `docs/reference/api.md` 获取函数索引，再定向读取。`executor.py` ~1360 行，不要从头读到尾 |
 | 锁定精确依赖版本 | 研究仓库，用 `>=` 指定下界 |
 
 ## 常见任务速查
 
 | 任务 | 入口文件 | 备注 |
 |------|----------|------|
-| 添加操作码 | `isa.py` + `executor.py` | 两个执行器都要更新 |
-| 编写测试程序 | `programs.py` | 遵循 `make_*` 命名模式 |
-| 理解嵌入编码 | `isa.py` 第 733 行起 | `embed_*` 函数 |
-| 调试执行轨迹 | `isa.py` → `compare_traces()` | 逐步对比 |
-| 添加结构化控制流 | `assembler.py` | WASM 风格 block/loop/if/br |
-| 解析 WAT 文本 | `wat_parser.py` | 712 行，完整 WAT 语法支持 |
-| 运行性能基准 | `dev/benchmark_scaling.py` 或 `src/benchmarks.py` | Mojo vs Python |
+| 添加操作码 | `src/llm_as_computer/isa.py` + `executor.py` | 两个执行器都要更新 |
+| 编写测试程序 | `src/llm_as_computer/programs.py` | 遵循 `make_*` 命名模式 |
+| 理解嵌入编码 | `src/llm_as_computer/isa.py` 第 733 行起 | `embed_*` 函数 |
+| 调试执行轨迹 | `src/llm_as_computer/isa.py` → `compare_traces()` | 逐步对比 |
+| 添加结构化控制流 | `src/llm_as_computer/assembler.py` | WASM 风格 block/loop/if/br |
+| 解析 WAT 文本 | `src/llm_as_computer/wat_parser.py` | 完整 WAT 语法支持 |
 
 ## 相关文档
 

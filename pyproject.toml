@@ -1,16 +1,12 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "llm-as-computer"
 version = "0.1.0"
 description = "Compiled transformer executor — programs run inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head."
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
 authors = [
     { name = "Oskar Austegard" },
+    { name = "Inschrift.Spruch.Raum"}
 ]
 keywords = ["transformer", "attention", "interpreter", "wasm", "compiled-execution"]
 classifiers = [
@@ -34,15 +30,12 @@ dev = [
     "ruff>=0.8",
 ]
 
-[tool.uv]
-package = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/llm_as_computer"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-collect_ignore_glob = ["src/*"]
 
 [tool.ruff]
 lint.extend-select = ["ALL"]

@@ -1,6 +1,6 @@
 # R&D 计划摘要
 
-> 完整计划见 [RD-PLAN.md](../../dev/RD-PLAN.md)，详细发现见 [findings-summary.md](./findings-summary.md)，项目总览见 [README](../README.md)。
+> 详细发现见 [findings-summary.md](./findings-summary.md)，项目总览见 [README](../README.md)。
 
 ## 项目目标
 
