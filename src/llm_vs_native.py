@@ -21,11 +21,10 @@ import sys
 import os
 import time
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, REPO)
+from llm_as_computer.executor import NumPyExecutor, TorchExecutor
 
-from executor import NumPyExecutor, TorchExecutor
-from src.benchmarks import make_fnv1a, make_bubble_sort, make_sum_of_primes
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from benchmarks import make_fnv1a, make_bubble_sort, make_sum_of_primes
 
 BINARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "percepta_exec")
 
@@ -33,6 +32,7 @@ MASK32 = 0xFFFFFFFF
 
 
 # ─── Native Python implementations ───────────────────────────────
+
 
 def native_fnv1a(data: list) -> int:
     h = 2166136261
@@ -68,8 +68,8 @@ def native_sum_of_primes(limit: int) -> int:
 
 
 NATIVE_IMPLS = {
-    "fnv1a_32":   lambda: native_fnv1a(list(range(32))),
-    "bubble_20":  lambda: native_bubble_sort_sum(
+    "fnv1a_32": lambda: native_fnv1a(list(range(32))),
+    "bubble_20": lambda: native_bubble_sort_sum(
         [15, 3, 9, 1, 7, 12, 5, 18, 2, 11, 8, 16, 4, 14, 6, 19, 0, 13, 17, 10]
     ),
     "primes_100": lambda: native_sum_of_primes(100),
@@ -77,6 +77,7 @@ NATIVE_IMPLS = {
 
 
 # ─── Timing helpers ───────────────────────────────────────────────
+
 
 def instr_to_tokens(prog) -> list:
     return [str(x) for instr in prog for x in (instr.op, instr.arg)]
@@ -110,7 +111,9 @@ def time_mojo(prog, repeat: int) -> float:
     tokens = instr_to_tokens(prog)
     r = subprocess.run(
         [BINARY, "--repeat", str(repeat)] + tokens,
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     for line in r.stdout.splitlines():
         if line.startswith("TIMING_NS:"):
@@ -136,11 +139,12 @@ def count_steps(prog) -> int:
 
 # ─── Main ─────────────────────────────────────────────────────────
 
+
 def main():
     skip_torch = "--skip-torch" in sys.argv
-    repeat_fast = 200   # for native/mojo/numpy
-    repeat_numpy = 20   # numpy is slow
-    repeat_torch = 3    # torch is very slow
+    repeat_fast = 200  # for native/mojo/numpy
+    repeat_numpy = 20  # numpy is slow
+    repeat_torch = 3  # torch is very slow
 
     for arg in sys.argv[1:]:
         if arg.startswith("--repeat="):
@@ -154,13 +158,15 @@ def main():
         sys.exit(1)
 
     benchmarks = [
-        ("fnv1a_32",   *make_fnv1a(list(range(32))),
-         "FNV-1a hash of 32 bytes"),
-        ("bubble_20",  *make_bubble_sort(
-            [15,3,9,1,7,12,5,18,2,11,8,16,4,14,6,19,0,13,17,10]),
-         "bubble sort 20 elements"),
-        ("primes_100", *make_sum_of_primes(100),
-         "sum of primes ≤ 100"),
+        ("fnv1a_32", *make_fnv1a(list(range(32))), "FNV-1a hash of 32 bytes"),
+        (
+            "bubble_20",
+            *make_bubble_sort(
+                [15, 3, 9, 1, 7, 12, 5, 18, 2, 11, 8, 16, 4, 14, 6, 19, 0, 13, 17, 10]
+            ),
+            "bubble sort 20 elements",
+        ),
+        ("primes_100", *make_sum_of_primes(100), "sum of primes ≤ 100"),
     ]
 
     print("LLM-as-computer vs Native Python")
@@ -181,17 +187,19 @@ def main():
         assert native_fn() == expected, f"Native {name} wrong"
 
         print(f"── {name}  ({steps} steps)  {desc}")
-        print(f"   {'Executor':<10}  {'Total µs':>10}  {'ns/step':>10}  {'vs Native':>12}")
-        print(f"   {'-'*10}  {'-'*10}  {'-'*10}  {'-'*12}")
+        print(
+            f"   {'Executor':<10}  {'Total µs':>10}  {'ns/step':>10}  {'vs Native':>12}"
+        )
+        print(f"   {'-' * 10}  {'-' * 10}  {'-' * 10}  {'-' * 12}")
 
         native_ns = time_native(native_fn, repeat_fast)
-        mojo_ns   = time_mojo(prog, repeat_fast)
-        numpy_ns  = time_numpy(prog, repeat_numpy)
+        mojo_ns = time_mojo(prog, repeat_fast)
+        numpy_ns = time_numpy(prog, repeat_numpy)
 
         results = [
-            ("Native",  native_ns),
-            ("Mojo",    mojo_ns),
-            ("NumPy",   numpy_ns),
+            ("Native", native_ns),
+            ("Mojo", mojo_ns),
+            ("NumPy", numpy_ns),
         ]
 
         if not skip_torch:
@@ -201,10 +209,12 @@ def main():
             print("\r", end="")
 
         for label, ns in results:
-            us       = ns / 1000
-            ns_step  = ns / steps
+            us = ns / 1000
+            ns_step = ns / steps
             overhead = ns / native_ns
-            marker   = "  ← baseline" if label == "Native" else f"  {overhead:>6.0f}× slower"
+            marker = (
+                "  ← baseline" if label == "Native" else f"  {overhead:>6.0f}× slower"
+            )
             print(f"   {label:<10}  {us:>10.1f}  {ns_step:>10.1f}  {marker}")
 
         print()

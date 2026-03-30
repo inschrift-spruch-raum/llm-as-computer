@@ -41,10 +41,14 @@ References
   Issue #36: Tier 3 Chunk 1 — Structured control flow assembler + BR_TABLE
 """
 
-from isa import (
+from .isa import (
     Instruction,
-    OP_PUSH, OP_POP, OP_DUP, OP_EQ,
-    OP_JZ, OP_JNZ,
+    OP_PUSH,
+    OP_POP,
+    OP_DUP,
+    OP_EQ,
+    OP_JZ,
+    OP_JNZ,
     program as _flat,
 )
 
@@ -80,15 +84,16 @@ def compile_structured(wasm_instrs):
         ])
         # Flat: PUSH 5; PUSH 1; JNZ 6; PUSH 99; HALT
     """
-    flat = []         # growing list of Instruction
-    lbl_stack = []    # control-flow frames (dicts) pushed by BLOCK/LOOP/IF
-    pending = {}      # label_id -> [flat-indices of JNZ/JZ to backpatch]
-    _nxt = [0]        # mutable counter for label IDs
+    flat = []  # growing list of Instruction
+    lbl_stack = []  # control-flow frames (dicts) pushed by BLOCK/LOOP/IF
+    pending = {}  # label_id -> [flat-indices of JNZ/JZ to backpatch]
+    _nxt = [0]  # mutable counter for label IDs
 
     # ── label helpers ────────────────────────────────────────────────
 
     def _alloc():
-        lbl = _nxt[0]; _nxt[0] += 1
+        lbl = _nxt[0]
+        _nxt[0] += 1
         pending[lbl] = []
         return lbl
 
@@ -130,69 +135,68 @@ def compile_structured(wasm_instrs):
         For LOOP: jump to start (backward, known addr).
         For BLOCK/IF: jump to end (forward, pending label).
         """
-        if blk['kind'] == 'loop':
-            _jump_addr(blk['start'])
+        if blk["kind"] == "loop":
+            _jump_addr(blk["start"])
         else:
-            _jump_fwd(blk['end'])
+            _jump_fwd(blk["end"])
 
     def _jcc_to_blk(op, blk):
         """Emit a conditional jump (op) to the natural target of blk."""
-        if blk['kind'] == 'loop':
-            flat.append(Instruction(op, blk['start']))
+        if blk["kind"] == "loop":
+            flat.append(Instruction(op, blk["start"]))
         else:
-            _jcc_fwd(op, blk['end'])
+            _jcc_fwd(op, blk["end"])
 
     # ── main compilation loop ─────────────────────────────────────────
 
     for raw in wasm_instrs:
         if not isinstance(raw, (list, tuple)):
             raise TypeError(
-                f"Expected tuple/list instruction, got {type(raw).__name__}: "
-                f"{raw!r}"
+                f"Expected tuple/list instruction, got {type(raw).__name__}: {raw!r}"
             )
         name = raw[0].upper() if isinstance(raw[0], str) else raw[0]
 
-        if name == 'BLOCK':
-            lbl_stack.append({'kind': 'block', 'end': _alloc()})
+        if name == "BLOCK":
+            lbl_stack.append({"kind": "block", "end": _alloc()})
 
-        elif name == 'LOOP':
-            lbl_stack.append({
-                'kind': 'loop',
-                'start': len(flat),   # backward target = current position
-                'end': _alloc(),
-            })
+        elif name == "LOOP":
+            lbl_stack.append(
+                {
+                    "kind": "loop",
+                    "start": len(flat),  # backward target = current position
+                    "end": _alloc(),
+                }
+            )
 
-        elif name == 'IF':
+        elif name == "IF":
             else_lbl, end_lbl = _alloc(), _alloc()
-            _jcc_fwd(OP_JZ, else_lbl)   # jump to else/end if condition == 0
-            lbl_stack.append({'kind': 'if', 'else': else_lbl, 'end': end_lbl})
+            _jcc_fwd(OP_JZ, else_lbl)  # jump to else/end if condition == 0
+            lbl_stack.append({"kind": "if", "else": else_lbl, "end": end_lbl})
 
-        elif name == 'ELSE':
+        elif name == "ELSE":
             blk = lbl_stack[-1]
-            if blk['kind'] != 'if':
-                raise ValueError(
-                    f"ELSE without matching IF (found {blk['kind']!r})"
-                )
-            _jump_fwd(blk['end'])   # then-branch skips else-body
-            _resolve(blk['else'])   # else-body starts here
+            if blk["kind"] != "if":
+                raise ValueError(f"ELSE without matching IF (found {blk['kind']!r})")
+            _jump_fwd(blk["end"])  # then-branch skips else-body
+            _resolve(blk["else"])  # else-body starts here
 
-        elif name == 'END':
+        elif name == "END":
             blk = lbl_stack.pop()
-            if blk['kind'] == 'if':
+            if blk["kind"] == "if":
                 # If no ELSE was seen, the else-label still needs resolving.
-                if blk['else'] in pending:
-                    _resolve(blk['else'])
-            _resolve(blk['end'])
+                if blk["else"] in pending:
+                    _resolve(blk["else"])
+            _resolve(blk["end"])
 
-        elif name == 'BR':
+        elif name == "BR":
             n = raw[1]
             _jump_to_blk(_blk(n))
 
-        elif name == 'BR_IF':
+        elif name == "BR_IF":
             n = raw[1]
             _jcc_to_blk(OP_JNZ, _blk(n))
 
-        elif name == 'BR_TABLE':
+        elif name == "BR_TABLE":
             labels, default_depth = raw[1], raw[2]
             n_cases = len(labels)
 

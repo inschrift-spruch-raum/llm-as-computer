@@ -18,16 +18,16 @@ import sys
 import os
 import time
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, REPO)
+from llm_as_computer.executor import NumPyExecutor
 
-from executor import NumPyExecutor
-from src.benchmarks import BENCHMARKS
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from benchmarks import BENCHMARKS
 
 BINARY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "percepta_exec")
 
 
 # ─── Timing helpers ──────────────────────────────────────────────
+
 
 def instr_to_tokens(prog) -> list[str]:
     return [str(x) for instr in prog for x in (instr.op, instr.arg)]
@@ -38,7 +38,9 @@ def time_mojo(prog, repeat: int) -> float:
     tokens = instr_to_tokens(prog)
     r = subprocess.run(
         [BINARY, "--repeat", str(repeat)] + tokens,
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     for line in r.stdout.splitlines():
         if line.startswith("TIMING_NS:"):
@@ -67,6 +69,7 @@ def count_steps(prog) -> int:
 
 # ─── Correctness check ───────────────────────────────────────────
 
+
 def verify_mojo(prog, expected) -> bool:
     """Run Mojo in normal mode and check result."""
     tokens = instr_to_tokens(prog)
@@ -80,9 +83,10 @@ def verify_mojo(prog, expected) -> bool:
 
 # ─── Main ────────────────────────────────────────────────────────
 
+
 def main():
-    repeat     = 200
-    also_test  = "--also-test" in sys.argv
+    repeat = 200
+    also_test = "--also-test" in sys.argv
     for arg in sys.argv[1:]:
         if arg.startswith("--repeat="):
             repeat = int(arg.split("=")[1])
@@ -105,27 +109,31 @@ def main():
 
     # Header
     w = 16
-    print(f"{'Program':<{w}}  {'Steps':>6}  "
-          f"{'Mojo µs':>9}  {'NumPy µs':>9}  "
-          f"{'Mojo ns/step':>13}  {'NumPy ns/step':>14}  {'Speedup':>8}")
+    print(
+        f"{'Program':<{w}}  {'Steps':>6}  "
+        f"{'Mojo µs':>9}  {'NumPy µs':>9}  "
+        f"{'Mojo ns/step':>13}  {'NumPy ns/step':>14}  {'Speedup':>8}"
+    )
     print("-" * 85)
 
     for name, prog, expected, desc in BENCHMARKS:
         steps = count_steps(prog)
 
-        mojo_ns  = time_mojo(prog, repeat)
+        mojo_ns = time_mojo(prog, repeat)
         numpy_ns = time_numpy(prog, repeat)
 
-        mojo_us       = mojo_ns  / 1000
-        numpy_us      = numpy_ns / 1000
-        mojo_ns_step  = mojo_ns  / steps
+        mojo_us = mojo_ns / 1000
+        numpy_us = numpy_ns / 1000
+        mojo_ns_step = mojo_ns / steps
         numpy_ns_step = numpy_ns / steps
-        speedup       = numpy_ns / mojo_ns
+        speedup = numpy_ns / mojo_ns
 
-        print(f"{name:<{w}}  {steps:>6}  "
-              f"{mojo_us:>9.1f}  {numpy_us:>9.1f}  "
-              f"{mojo_ns_step:>13.1f}  {numpy_ns_step:>14.1f}  "
-              f"{speedup:>7.1f}×")
+        print(
+            f"{name:<{w}}  {steps:>6}  "
+            f"{mojo_us:>9.1f}  {numpy_us:>9.1f}  "
+            f"{mojo_ns_step:>13.1f}  {numpy_ns_step:>14.1f}  "
+            f"{speedup:>7.1f}×"
+        )
 
     print()
     print("Note: Mojo time = in-process execution only (--repeat N, median of N runs).")

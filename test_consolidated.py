@@ -8,41 +8,97 @@ import sys
 import os
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dev', 'phases'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dev", "phases")
+)
 
-from isa import (
-    Instruction, compare_traces, test_algorithm, test_trap_algorithm,
-    OP_PUSH, OP_POP, OP_ADD, OP_DUP, OP_HALT,
-    OP_SUB, OP_JZ, OP_JNZ, OP_NOP,
-    OP_SWAP, OP_OVER, OP_ROT,
-    OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U,
-    OP_EQZ, OP_EQ, OP_NE,
-    OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
-    OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U,
-    OP_AND, OP_OR, OP_XOR,
-    OP_SHL, OP_SHR_S, OP_SHR_U, OP_ROTL, OP_ROTR,
-    OP_CLZ, OP_CTZ, OP_POPCNT, OP_ABS, OP_NEG, OP_SELECT,
+from llm_as_computer.isa import (
+    Instruction,
+    compare_traces,
+    test_algorithm,
+    test_trap_algorithm,
+    OP_PUSH,
+    OP_POP,
+    OP_ADD,
+    OP_DUP,
+    OP_HALT,
+    OP_SUB,
+    OP_JZ,
+    OP_JNZ,
+    OP_NOP,
+    OP_SWAP,
+    OP_OVER,
+    OP_ROT,
+    OP_MUL,
+    OP_DIV_S,
+    OP_DIV_U,
+    OP_REM_S,
+    OP_REM_U,
+    OP_EQZ,
+    OP_EQ,
+    OP_NE,
+    OP_LT_S,
+    OP_LT_U,
+    OP_GT_S,
+    OP_GT_U,
+    OP_LE_S,
+    OP_LE_U,
+    OP_GE_S,
+    OP_GE_U,
+    OP_AND,
+    OP_OR,
+    OP_XOR,
+    OP_SHL,
+    OP_SHR_S,
+    OP_SHR_U,
+    OP_ROTL,
+    OP_ROTR,
+    OP_CLZ,
+    OP_CTZ,
+    OP_POPCNT,
+    OP_ABS,
+    OP_NEG,
+    OP_SELECT,
     OP_TRAP,
 )
-from executor import NumPyExecutor, TorchExecutor
-from programs import (
+from llm_as_computer.executor import NumPyExecutor, TorchExecutor
+from llm_as_computer.programs import (
     ALL_TESTS,
-    make_fibonacci, make_power_of_2, make_sum_1_to_n, make_multiply, make_is_even,
-    make_native_multiply, make_native_divmod, make_native_remainder,
-    make_native_is_even, make_factorial, make_gcd,
-    make_compare_eqz, make_compare_binary,
-    make_native_max, make_native_abs, make_native_clamp,
-    make_bitwise_binary, make_popcount_loop, make_bit_extract,
-    make_native_clz, make_native_ctz, make_native_popcnt,
-    make_native_abs_unary, make_native_neg,
-    make_select, make_select_max, make_log2_floor, make_is_power_of_2,
+    make_fibonacci,
+    make_power_of_2,
+    make_sum_1_to_n,
+    make_multiply,
+    make_is_even,
+    make_native_multiply,
+    make_native_divmod,
+    make_native_remainder,
+    make_native_is_even,
+    make_factorial,
+    make_gcd,
+    make_compare_eqz,
+    make_compare_binary,
+    make_native_max,
+    make_native_abs,
+    make_native_clamp,
+    make_bitwise_binary,
+    make_popcount_loop,
+    make_bit_extract,
+    make_native_clz,
+    make_native_ctz,
+    make_native_popcnt,
+    make_native_abs_unary,
+    make_native_neg,
+    make_select,
+    make_select_max,
+    make_log2_floor,
+    make_is_power_of_2,
     fib,
 )
 
 # Cross-validation imports from old phase files
 from phase14_extended_isa import (
-    Phase14Executor, Phase14PyTorchExecutor,
+    Phase14Executor,
+    Phase14PyTorchExecutor,
 )
 
 
@@ -67,27 +123,52 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected_top and new_top == expected_top
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected_top:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected_top:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
         if not ok and not match:
             print(f"         Detail: {detail}")
 
     # Phase 11 extended tests
     ext_tests = [
-        ("sub_basic",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
-          Instruction(OP_SUB), Instruction(OP_HALT)], 7),
-        ("loop_countdown",
-         [Instruction(OP_PUSH, 3), Instruction(OP_DUP),
-          Instruction(OP_PUSH, 1), Instruction(OP_SUB),
-          Instruction(OP_DUP), Instruction(OP_JNZ, 1),
-          Instruction(OP_HALT)], 0),
-        ("jz_taken",
-         [Instruction(OP_PUSH, 0), Instruction(OP_JZ, 3),
-          Instruction(OP_HALT),
-          Instruction(OP_PUSH, 42), Instruction(OP_HALT)], 42),
+        (
+            "sub_basic",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 3),
+                Instruction(OP_SUB),
+                Instruction(OP_HALT),
+            ],
+            7,
+        ),
+        (
+            "loop_countdown",
+            [
+                Instruction(OP_PUSH, 3),
+                Instruction(OP_DUP),
+                Instruction(OP_PUSH, 1),
+                Instruction(OP_SUB),
+                Instruction(OP_DUP),
+                Instruction(OP_JNZ, 1),
+                Instruction(OP_HALT),
+            ],
+            0,
+        ),
+        (
+            "jz_taken",
+            [
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_JZ, 3),
+                Instruction(OP_HALT),
+                Instruction(OP_PUSH, 42),
+                Instruction(OP_HALT),
+            ],
+            42,
+        ),
     ]
     for name, prog, expected in ext_tests:
         old_trace = old.execute(prog)
@@ -96,10 +177,13 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Phase 13 algorithms
     p13_algos = [
@@ -118,10 +202,13 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Phase 14 arithmetic
     arith_tests = [
@@ -143,10 +230,13 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Phase 14 comparisons
     cmp_tests = [
@@ -168,10 +258,13 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Phase 14 bitwise
     bit_tests = [
@@ -192,10 +285,13 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Phase 14 unary + parametric
     unary_tests = [
@@ -221,19 +317,34 @@ def test_numpy_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Division by zero traps
     trap_progs = [
-        ("div_by_zero",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
-          Instruction(OP_DIV_S), Instruction(OP_HALT)]),
-        ("rem_by_zero",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
-          Instruction(OP_REM_S), Instruction(OP_HALT)]),
+        (
+            "div_by_zero",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_DIV_S),
+                Instruction(OP_HALT),
+            ],
+        ),
+        (
+            "rem_by_zero",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_REM_S),
+                Instruction(OP_HALT),
+            ],
+        ),
     ]
     for name, prog in trap_progs:
         old_trace = old.execute(prog)
@@ -242,10 +353,13 @@ def test_numpy_equivalence():
         old_trapped = old_trace.steps and old_trace.steps[-1].op == OP_TRAP
         new_trapped = new_trace.steps and new_trace.steps[-1].op == OP_TRAP
         ok = match and old_trapped and new_trapped
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  old_trap={old_trapped}  new_trap={new_trapped}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  old_trap={old_trapped}  new_trap={new_trapped}  match={'Y' if match else 'N'}"
+        )
 
     print(f"\n  NumPy equivalence: {passed}/{total} passed")
     return passed == total
@@ -272,10 +386,13 @@ def test_torch_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected_top and new_top == expected_top
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected_top:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected_top:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
         if not ok and not match:
             print(f"         Detail: {detail}")
 
@@ -293,10 +410,13 @@ def test_torch_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Phase 14 arithmetic + comparison + bitwise + unary
     p14_tests = [
@@ -324,19 +444,34 @@ def test_torch_equivalence():
         old_top = old_trace.steps[-1].top if old_trace.steps else None
         new_top = new_trace.steps[-1].top if new_trace.steps else None
         ok = match and old_top == expected and new_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>6}  old={old_top}  new={new_top}  match={'Y' if match else 'N'}"
+        )
 
     # Trap tests
     trap_progs = [
-        ("div_by_zero",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
-          Instruction(OP_DIV_S), Instruction(OP_HALT)]),
-        ("rem_by_zero",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 0),
-          Instruction(OP_REM_U), Instruction(OP_HALT)]),
+        (
+            "div_by_zero",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_DIV_S),
+                Instruction(OP_HALT),
+            ],
+        ),
+        (
+            "rem_by_zero",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_REM_U),
+                Instruction(OP_HALT),
+            ],
+        ),
     ]
     for name, prog in trap_progs:
         old_trace = old.execute(prog)
@@ -345,10 +480,13 @@ def test_torch_equivalence():
         old_trapped = old_trace.steps and old_trace.steps[-1].op == OP_TRAP
         new_trapped = new_trace.steps and new_trace.steps[-1].op == OP_TRAP
         ok = match and old_trapped and new_trapped
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  old_trap={old_trapped}  new_trap={new_trapped}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  old_trap={old_trapped}  new_trap={new_trapped}  match={'Y' if match else 'N'}"
+        )
 
     print(f"\n  Torch equivalence: {passed}/{total} passed")
     return passed == total
@@ -374,41 +512,45 @@ def test_new_np_vs_new_pt():
         all_progs.append((name, prog, expected))
 
     # Phase 13 algorithms
-    all_progs.extend([
-        ("fib(10)", *make_fibonacci(10)),
-        ("sum(1..15)", *make_sum_1_to_n(15)),
-        ("power(2^7)", *make_power_of_2(7)),
-        ("mul(12,10)", *make_multiply(12, 10)),
-    ])
+    all_progs.extend(
+        [
+            ("fib(10)", *make_fibonacci(10)),
+            ("sum(1..15)", *make_sum_1_to_n(15)),
+            ("power(2^7)", *make_power_of_2(7)),
+            ("mul(12,10)", *make_multiply(12, 10)),
+        ]
+    )
 
     # Phase 14 full coverage
-    all_progs.extend([
-        ("native_mul(100,200)", *make_native_multiply(100, 200)),
-        ("factorial(10)", *make_factorial(10)),
-        ("gcd(17,13)", *make_gcd(17, 13)),
-        ("native_is_even(100)", *make_native_is_even(100)),
-        ("eq(5,5)", *make_compare_binary(OP_EQ, 5, 5)),
-        ("ne(3,7)", *make_compare_binary(OP_NE, 3, 7)),
-        ("le_s(3,7)", *make_compare_binary(OP_LE_S, 3, 7)),
-        ("ge_s(10,2)", *make_compare_binary(OP_GE_S, 10, 2)),
-        ("max(5,5)", *make_native_max(5, 5)),
-        ("clamp(0,5,10)", *make_native_clamp(0, 5, 10)),
-        ("or(0xAA,0x55)", *make_bitwise_binary(OP_OR, 0xAA, 0x55)),
-        ("xor(12,10)", *make_bitwise_binary(OP_XOR, 12, 10)),
-        ("shl(0xFF,4)", *make_bitwise_binary(OP_SHL, 0xFF, 4)),
-        ("shr_s(16,1)", *make_bitwise_binary(OP_SHR_S, 16, 1)),
-        ("popcount(0xFFFF)", *make_popcount_loop(0xFFFF)),
-        ("bit(42,3)", *make_bit_extract(42, 3)),
-        ("clz(65536)", *make_native_clz(65536)),
-        ("ctz(1024)", *make_native_ctz(1024)),
-        ("popcnt_native(1023)", *make_native_popcnt(1023)),
-        ("abs_native(0)", *make_native_abs_unary(0)),
-        ("neg(1000)", *make_native_neg(1000)),
-        ("select(5,9,-1)", *make_select(5, 9, -1)),
-        ("select_max(7,7)", *make_select_max(7, 7)),
-        ("log2(255)", *make_log2_floor(255)),
-        ("ispow2(0)", *make_is_power_of_2(0)),
-    ])
+    all_progs.extend(
+        [
+            ("native_mul(100,200)", *make_native_multiply(100, 200)),
+            ("factorial(10)", *make_factorial(10)),
+            ("gcd(17,13)", *make_gcd(17, 13)),
+            ("native_is_even(100)", *make_native_is_even(100)),
+            ("eq(5,5)", *make_compare_binary(OP_EQ, 5, 5)),
+            ("ne(3,7)", *make_compare_binary(OP_NE, 3, 7)),
+            ("le_s(3,7)", *make_compare_binary(OP_LE_S, 3, 7)),
+            ("ge_s(10,2)", *make_compare_binary(OP_GE_S, 10, 2)),
+            ("max(5,5)", *make_native_max(5, 5)),
+            ("clamp(0,5,10)", *make_native_clamp(0, 5, 10)),
+            ("or(0xAA,0x55)", *make_bitwise_binary(OP_OR, 0xAA, 0x55)),
+            ("xor(12,10)", *make_bitwise_binary(OP_XOR, 12, 10)),
+            ("shl(0xFF,4)", *make_bitwise_binary(OP_SHL, 0xFF, 4)),
+            ("shr_s(16,1)", *make_bitwise_binary(OP_SHR_S, 16, 1)),
+            ("popcount(0xFFFF)", *make_popcount_loop(0xFFFF)),
+            ("bit(42,3)", *make_bit_extract(42, 3)),
+            ("clz(65536)", *make_native_clz(65536)),
+            ("ctz(1024)", *make_native_ctz(1024)),
+            ("popcnt_native(1023)", *make_native_popcnt(1023)),
+            ("abs_native(0)", *make_native_abs_unary(0)),
+            ("neg(1000)", *make_native_neg(1000)),
+            ("select(5,9,-1)", *make_select(5, 9, -1)),
+            ("select_max(7,7)", *make_select_max(7, 7)),
+            ("log2(255)", *make_log2_floor(255)),
+            ("ispow2(0)", *make_is_power_of_2(0)),
+        ]
+    )
 
     for name, prog, expected in all_progs:
         np_trace = np_exec.execute(prog)
@@ -417,10 +559,13 @@ def test_new_np_vs_new_pt():
         np_top = np_trace.steps[-1].top if np_trace.steps else None
         pt_top = pt_trace.steps[-1].top if pt_trace.steps else None
         ok = match and np_top == expected and pt_top == expected
-        if ok: passed += 1
+        if ok:
+            passed += 1
         total += 1
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name:25s}  expected={expected:>10}  np={np_top}  pt={pt_top}  match={'Y' if match else 'N'}")
+        print(
+            f"  {status}  {name:25s}  expected={expected:>10}  np={np_top}  pt={pt_top}  match={'Y' if match else 'N'}"
+        )
         if not ok:
             if not match:
                 print(f"         Detail: {detail}")
@@ -451,7 +596,8 @@ def main():
     all_pass = True
     for name, ok in results:
         status = "PASS" if ok else "FAIL"
-        if not ok: all_pass = False
+        if not ok:
+            all_pass = False
         print(f"  {status}  {name}")
 
     print(f"\n  Time: {elapsed:.2f}s")

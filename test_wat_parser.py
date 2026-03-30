@@ -7,10 +7,10 @@ Verifies:
 """
 
 import sys
-from wat_parser import parse_wat
-from isa import Instruction, OP_PUSH, OP_HALT, compare_traces
-from executor import NumPyExecutor
-from programs import ALL_TESTS, fib
+from llm_as_computer.wat_parser import parse_wat
+from llm_as_computer.isa import Instruction, OP_PUSH, OP_HALT, compare_traces
+from llm_as_computer.executor import NumPyExecutor
+from llm_as_computer.programs import ALL_TESTS, fib
 
 
 def run_and_compare(name, wat_text, expected_top, *, tuple_prog=None, verbose=False):
@@ -355,6 +355,7 @@ WAT_BITWISE = """
 
 # ─── Main test runner ─────────────────────────────────────────────
 
+
 def main():
     print("=== WAT Parser Integration Tests ===\n")
     passed = 0
@@ -496,5 +497,5 @@ def main():
     print("All tests passed!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

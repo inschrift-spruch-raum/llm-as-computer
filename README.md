@@ -124,14 +124,18 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 
 ## Files
 
-### Core
+### Core (`src/llm_as_computer/`)
 ```
-isa.py                  ISA definition: 55 opcodes, types, embedding layout
-executor.py             NumPy + PyTorch compiled transformer executors
-programs.py             Test programs and algorithm generators
-assembler.py            WASM-style structured control flow → flat ISA compiler
-wat_parser.py           WebAssembly text format parser
-c_pipeline.py           C → WAT → ISA compilation pipeline
+src/llm_as_computer/isa.py       ISA definition: 55 opcodes, types, embedding layout
+src/llm_as_computer/executor.py  NumPy + PyTorch compiled transformer executors
+src/llm_as_computer/programs.py  Test programs and algorithm generators
+src/llm_as_computer/assembler.py WASM-style structured control flow → flat ISA compiler
+src/llm_as_computer/wat_parser.py WebAssembly text format parser
+src/llm_as_computer/c_pipeline.py C → WAT → ISA compilation pipeline
+```
+
+### Tests
+```
 test_consolidated.py    Integration tests (NumPy/PyTorch equivalence)
 test_wat_parser.py      WAT parser test suite
 ```

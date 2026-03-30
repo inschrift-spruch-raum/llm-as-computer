@@ -11,46 +11,122 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from isa import (
-    Instruction, Trace, TraceStep,
+from .isa import (
+    Instruction,
+    Trace,
+    TraceStep,
     CompiledAttentionHead,
-    embed_program_token, embed_stack_entry, embed_state,
-    embed_local_entry, embed_heap_entry, embed_call_frame,
-    D_MODEL, DTYPE, EPS, N_OPCODES,
-    DIM_IS_PROG, DIM_IS_STACK, DIM_IS_STATE,
-    DIM_PROG_KEY_0, DIM_PROG_KEY_1,
-    DIM_STACK_KEY_0, DIM_STACK_KEY_1,
-    DIM_IS_LOCAL, DIM_LOCAL_KEY_0, DIM_LOCAL_KEY_1,
-    DIM_IS_HEAP, DIM_HEAP_KEY_0, DIM_HEAP_KEY_1,
-    DIM_IS_CALL_STACK, DIM_CALL_KEY_0, DIM_CALL_KEY_1,
-    DIM_CALL_RET_ADDR, DIM_CALL_SAVED_SP, DIM_CALL_LOCALS_BASE,
-    DIM_OPCODE, DIM_VALUE, DIM_IP, DIM_SP, DIM_ONE,
-    OP_PUSH, OP_POP, OP_ADD, OP_DUP, OP_HALT,
-    OP_SUB, OP_JZ, OP_JNZ, OP_NOP,
-    OP_SWAP, OP_OVER, OP_ROT,
-    OP_MUL, OP_DIV_S, OP_DIV_U, OP_REM_S, OP_REM_U,
-    OP_EQZ, OP_EQ, OP_NE,
-    OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
-    OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U,
-    OP_AND, OP_OR, OP_XOR,
-    OP_SHL, OP_SHR_S, OP_SHR_U, OP_ROTL, OP_ROTR,
-    OP_CLZ, OP_CTZ, OP_POPCNT, OP_ABS, OP_NEG, OP_SELECT,
-    OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE,
-    OP_I32_LOAD, OP_I32_STORE,
-    OP_I32_LOAD8_U, OP_I32_LOAD8_S,
-    OP_I32_LOAD16_U, OP_I32_LOAD16_S,
-    OP_I32_STORE8, OP_I32_STORE16,
-    OP_CALL, OP_RETURN,
+    embed_program_token,
+    embed_stack_entry,
+    embed_state,
+    embed_local_entry,
+    embed_heap_entry,
+    embed_call_frame,
+    D_MODEL,
+    DTYPE,
+    EPS,
+    N_OPCODES,
+    DIM_IS_PROG,
+    DIM_IS_STACK,
+    DIM_IS_STATE,
+    DIM_PROG_KEY_0,
+    DIM_PROG_KEY_1,
+    DIM_STACK_KEY_0,
+    DIM_STACK_KEY_1,
+    DIM_IS_LOCAL,
+    DIM_LOCAL_KEY_0,
+    DIM_LOCAL_KEY_1,
+    DIM_IS_HEAP,
+    DIM_HEAP_KEY_0,
+    DIM_HEAP_KEY_1,
+    DIM_IS_CALL_STACK,
+    DIM_CALL_KEY_0,
+    DIM_CALL_KEY_1,
+    DIM_CALL_RET_ADDR,
+    DIM_CALL_SAVED_SP,
+    DIM_CALL_LOCALS_BASE,
+    DIM_OPCODE,
+    DIM_VALUE,
+    DIM_IP,
+    DIM_SP,
+    DIM_ONE,
+    OP_PUSH,
+    OP_POP,
+    OP_ADD,
+    OP_DUP,
+    OP_HALT,
+    OP_SUB,
+    OP_JZ,
+    OP_JNZ,
+    OP_NOP,
+    OP_SWAP,
+    OP_OVER,
+    OP_ROT,
+    OP_MUL,
+    OP_DIV_S,
+    OP_DIV_U,
+    OP_REM_S,
+    OP_REM_U,
+    OP_EQZ,
+    OP_EQ,
+    OP_NE,
+    OP_LT_S,
+    OP_LT_U,
+    OP_GT_S,
+    OP_GT_U,
+    OP_LE_S,
+    OP_LE_U,
+    OP_GE_S,
+    OP_GE_U,
+    OP_AND,
+    OP_OR,
+    OP_XOR,
+    OP_SHL,
+    OP_SHR_S,
+    OP_SHR_U,
+    OP_ROTL,
+    OP_ROTR,
+    OP_CLZ,
+    OP_CTZ,
+    OP_POPCNT,
+    OP_ABS,
+    OP_NEG,
+    OP_SELECT,
+    OP_LOCAL_GET,
+    OP_LOCAL_SET,
+    OP_LOCAL_TEE,
+    OP_I32_LOAD,
+    OP_I32_STORE,
+    OP_I32_LOAD8_U,
+    OP_I32_LOAD8_S,
+    OP_I32_LOAD16_U,
+    OP_I32_LOAD16_S,
+    OP_I32_STORE8,
+    OP_I32_STORE16,
+    OP_CALL,
+    OP_RETURN,
     OP_TRAP,
-    OPCODE_DIM_MAP, OPCODE_IDX, NONLINEAR_OPS,
-    _trunc_div, _trunc_rem, _to_i32, MASK32,
-    _shr_u, _shr_s, _rotl32, _rotr32,
-    _clz32, _ctz32, _popcnt32,
-    _sign_extend_8, _sign_extend_16,
+    OPCODE_DIM_MAP,
+    OPCODE_IDX,
+    NONLINEAR_OPS,
+    _trunc_div,
+    _trunc_rem,
+    _to_i32,
+    MASK32,
+    _shr_u,
+    _shr_s,
+    _rotl32,
+    _rotr32,
+    _clz32,
+    _ctz32,
+    _popcnt32,
+    _sign_extend_8,
+    _sign_extend_16,
 )
 
 
 # ─── NumPy Executor ───────────────────────────────────────────────
+
 
 class NumPyExecutor:
     """Compiled numpy executor with full 42-opcode ISA.
@@ -85,7 +161,7 @@ class NumPyExecutor:
 
         def stack_write(addr, val):
             nonlocal write_count
-            stack_keys.append((2.0*addr, -float(addr*addr) + eps*write_count))
+            stack_keys.append((2.0 * addr, -float(addr * addr) + eps * write_count))
             stack_vals.append(val)
             write_count += 1
 
@@ -102,7 +178,12 @@ class NumPyExecutor:
         def local_write(local_idx, val):
             nonlocal local_write_count
             actual_idx = locals_base + local_idx
-            locals_keys.append((2.0*actual_idx, -float(actual_idx*actual_idx) + eps*local_write_count))
+            locals_keys.append(
+                (
+                    2.0 * actual_idx,
+                    -float(actual_idx * actual_idx) + eps * local_write_count,
+                )
+            )
             locals_vals.append(val)
             local_write_count += 1
 
@@ -119,7 +200,7 @@ class NumPyExecutor:
 
         def heap_write(addr, val):
             nonlocal heap_write_count
-            heap_keys.append((2.0*addr, -float(addr*addr) + eps*heap_write_count))
+            heap_keys.append((2.0 * addr, -float(addr * addr) + eps * heap_write_count))
             heap_vals.append(val)
             heap_write_count += 1
 
@@ -183,9 +264,9 @@ class NumPyExecutor:
                 stack_write(sp, val_b)
                 top = val_b
             elif op == OP_ROT:
-                val_top    = stack_read(sp)
+                val_top = stack_read(sp)
                 val_second = stack_read(sp - 1)
-                val_third  = stack_read(sp - 2)
+                val_third = stack_read(sp - 2)
                 stack_write(sp, val_third)
                 stack_write(sp - 1, val_top)
                 stack_write(sp - 2, val_second)
@@ -226,8 +307,18 @@ class NumPyExecutor:
                 result = 1 if val_a == 0 else 0
                 stack_write(sp, result)
                 top = result
-            elif op in (OP_EQ, OP_NE, OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
-                        OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U):
+            elif op in (
+                OP_EQ,
+                OP_NE,
+                OP_LT_S,
+                OP_LT_U,
+                OP_GT_S,
+                OP_GT_U,
+                OP_LE_S,
+                OP_LE_U,
+                OP_GE_S,
+                OP_GE_U,
+            ):
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
                 if op in (OP_EQ,):
@@ -331,9 +422,9 @@ class NumPyExecutor:
                 stack_write(sp, result)
                 top = result
             elif op == OP_SELECT:
-                val_a = stack_read(sp)       # c (condition)
-                val_b = stack_read(sp - 1)   # b (false value)
-                val_c = stack_read(sp - 2)   # a (true value)
+                val_a = stack_read(sp)  # c (condition)
+                val_b = stack_read(sp - 1)  # b (false value)
+                val_c = stack_read(sp - 2)  # a (true value)
                 result = val_c if val_a != 0 else val_b
                 sp -= 2
                 stack_write(sp, result)
@@ -453,6 +544,7 @@ class NumPyExecutor:
 
 # ─── Compiled PyTorch Model ──────────────────────────────────────
 
+
 class CompiledModel(nn.Module):
     """Compiled transformer with 10 attention heads and linear+nonlinear FF dispatch.
 
@@ -480,23 +572,27 @@ class CompiledModel(nn.Module):
         self.d_model = d_model
 
         # Heads 0-4
-        self.head_prog_op  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_prog_op = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
         self.head_prog_arg = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
-        self.head_stack_a  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
-        self.head_stack_b  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1, use_bias_q=True)
-        self.head_stack_c  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1, use_bias_q=True)
+        self.head_stack_a = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_stack_b = CompiledAttentionHead(
+            d_model, head_dim=2, v_dim=1, use_bias_q=True
+        )
+        self.head_stack_c = CompiledAttentionHead(
+            d_model, head_dim=2, v_dim=1, use_bias_q=True
+        )
         # Heads 5-6: local variable access
-        self.head_local_val   = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
-        self.head_local_addr  = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_local_val = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_local_addr = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
         # Heads 7-8: heap (linear memory) access
-        self.head_heap_val    = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
-        self.head_heap_addr   = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_heap_val = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
+        self.head_heap_addr = CompiledAttentionHead(d_model, head_dim=2, v_dim=1)
         # Head 9: call stack read (v_dim=3 for ret_addr, saved_sp, locals_base)
-        self.head_call_stack  = CompiledAttentionHead(d_model, head_dim=2, v_dim=3)
+        self.head_call_stack = CompiledAttentionHead(d_model, head_dim=2, v_dim=3)
 
         # FF dispatch: N_OPCODES opcodes, 6 value inputs (arg, va, vb, vc, local_val, heap_val)
-        self.register_buffer('M_top', torch.zeros(N_OPCODES, 6, dtype=DTYPE))
-        self.register_buffer('sp_deltas', torch.zeros(N_OPCODES, dtype=DTYPE))
+        self.register_buffer("M_top", torch.zeros(N_OPCODES, 6, dtype=DTYPE))
+        self.register_buffer("sp_deltas", torch.zeros(N_OPCODES, dtype=DTYPE))
 
         self._compile_weights()
 
@@ -505,7 +601,7 @@ class CompiledModel(nn.Module):
         with torch.no_grad():
             # ── Head 0: Program opcode fetch ──
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_IP]  = 1.0
+            W[0, DIM_IP] = 1.0
             W[1, DIM_ONE] = 1.0
             self.head_prog_op.W_Q.weight.copy_(W)
 
@@ -520,7 +616,7 @@ class CompiledModel(nn.Module):
 
             # ── Head 1: Program argument fetch ──
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_IP]  = 1.0
+            W[0, DIM_IP] = 1.0
             W[1, DIM_ONE] = 1.0
             self.head_prog_arg.W_Q.weight.copy_(W)
 
@@ -535,7 +631,7 @@ class CompiledModel(nn.Module):
 
             # ── Head 2: Stack read at SP ──
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_SP]  = 1.0
+            W[0, DIM_SP] = 1.0
             W[1, DIM_ONE] = 1.0
             self.head_stack_a.W_Q.weight.copy_(W)
 
@@ -550,7 +646,7 @@ class CompiledModel(nn.Module):
 
             # ── Head 3: Stack read at SP-1 ──
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_SP]  = 1.0
+            W[0, DIM_SP] = 1.0
             W[1, DIM_ONE] = 1.0
             self.head_stack_b.W_Q.weight.copy_(W)
             b = torch.zeros(2)
@@ -568,7 +664,7 @@ class CompiledModel(nn.Module):
 
             # ── Head 4: Stack read at SP-2 ──
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_SP]  = 1.0
+            W[0, DIM_SP] = 1.0
             W[1, DIM_ONE] = 1.0
             self.head_stack_c.W_Q.weight.copy_(W)
             b = torch.zeros(2)
@@ -587,8 +683,8 @@ class CompiledModel(nn.Module):
             # ── Head 5: Local value fetch ──
             # Query uses arg from instruction (local index), searches locals space
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE]  = 1.0   # query = instruction arg (local index)
-            W[1, DIM_ONE]    = 1.0
+            W[0, DIM_VALUE] = 1.0  # query = instruction arg (local index)
+            W[1, DIM_ONE] = 1.0
             self.head_local_val.W_Q.weight.copy_(W)
 
             W = torch.zeros(2, self.d_model)
@@ -603,8 +699,8 @@ class CompiledModel(nn.Module):
             # ── Head 6: Local address verify ──
             # Same Q/K as head 5, but V extracts the key[0]/2 for address checking
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE]  = 1.0
-            W[1, DIM_ONE]    = 1.0
+            W[0, DIM_VALUE] = 1.0
+            W[1, DIM_ONE] = 1.0
             self.head_local_addr.W_Q.weight.copy_(W)
 
             W = torch.zeros(2, self.d_model)
@@ -619,8 +715,8 @@ class CompiledModel(nn.Module):
             # ── Head 7: Heap value fetch ──
             # Query uses the address from stack (val_a), constructed dynamically in forward()
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE]  = 1.0   # query = heap address
-            W[1, DIM_ONE]    = 1.0
+            W[0, DIM_VALUE] = 1.0  # query = heap address
+            W[1, DIM_ONE] = 1.0
             self.head_heap_val.W_Q.weight.copy_(W)
 
             W = torch.zeros(2, self.d_model)
@@ -634,8 +730,8 @@ class CompiledModel(nn.Module):
 
             # ── Head 8: Heap address verify ──
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE]  = 1.0
-            W[1, DIM_ONE]    = 1.0
+            W[0, DIM_VALUE] = 1.0
+            W[1, DIM_ONE] = 1.0
             self.head_heap_addr.W_Q.weight.copy_(W)
 
             W = torch.zeros(2, self.d_model)
@@ -651,8 +747,8 @@ class CompiledModel(nn.Module):
             # Query uses call_depth to find most recent frame
             # Q extracts (call_depth, 1) from a synthetic query constructed in executor
             W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE]  = 1.0   # query = call_depth
-            W[1, DIM_ONE]    = 1.0
+            W[0, DIM_VALUE] = 1.0  # query = call_depth
+            W[1, DIM_ONE] = 1.0
             self.head_call_stack.W_Q.weight.copy_(W)
 
             W = torch.zeros(2, self.d_model)
@@ -662,63 +758,165 @@ class CompiledModel(nn.Module):
 
             # V extracts [ret_addr, saved_sp, locals_base] (v_dim=3)
             W = torch.zeros(3, self.d_model)
-            W[0, DIM_CALL_RET_ADDR]    = 1.0
-            W[1, DIM_CALL_SAVED_SP]    = 1.0
+            W[0, DIM_CALL_RET_ADDR] = 1.0
+            W[1, DIM_CALL_SAVED_SP] = 1.0
             W[2, DIM_CALL_LOCALS_BASE] = 1.0
             self.head_call_stack.W_V.weight.copy_(W)
 
             # ── FF dispatch: linear routing ──
             # M_top maps [arg, val_a, val_b, val_c, local_val, heap_val] -> candidate top per opcode
             #                         arg  va   vb   vc   lv   hv
-            self.M_top[0]  = torch.tensor([ 1.,  0.,  0.,  0.,  0.,  0.])  # PUSH: top = arg
-            self.M_top[1]  = torch.tensor([ 0.,  0.,  1.,  0.,  0.,  0.])  # POP:  top = val_b
-            self.M_top[2]  = torch.tensor([ 0.,  0.,  0.,  0.,  0.,  0.])  # ADD:  nonlinear (i32-masked)
-            self.M_top[3]  = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])  # DUP:  top = va
-            self.M_top[4]  = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])  # HALT: top = va
-            self.M_top[5]  = torch.tensor([ 0.,  0.,  0.,  0.,  0.,  0.])  # SUB:  nonlinear (i32-masked)
-            self.M_top[6]  = torch.tensor([ 0.,  0.,  1.,  0.,  0.,  0.])  # JZ:   top = vb
-            self.M_top[7]  = torch.tensor([ 0.,  0.,  1.,  0.,  0.,  0.])  # JNZ:  top = vb
-            self.M_top[8]  = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])  # NOP:  top = va
-            self.M_top[9]  = torch.tensor([ 0.,  0.,  1.,  0.,  0.,  0.])  # SWAP: top = vb
-            self.M_top[10] = torch.tensor([ 0.,  0.,  1.,  0.,  0.,  0.])  # OVER: top = vb
-            self.M_top[11] = torch.tensor([ 0.,  0.,  0.,  1.,  0.,  0.])  # ROT:  top = vc
+            self.M_top[0] = torch.tensor(
+                [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            )  # PUSH: top = arg
+            self.M_top[1] = torch.tensor(
+                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            )  # POP:  top = val_b
+            self.M_top[2] = torch.tensor(
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            )  # ADD:  nonlinear (i32-masked)
+            self.M_top[3] = torch.tensor(
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            )  # DUP:  top = va
+            self.M_top[4] = torch.tensor(
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            )  # HALT: top = va
+            self.M_top[5] = torch.tensor(
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            )  # SUB:  nonlinear (i32-masked)
+            self.M_top[6] = torch.tensor(
+                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            )  # JZ:   top = vb
+            self.M_top[7] = torch.tensor(
+                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            )  # JNZ:  top = vb
+            self.M_top[8] = torch.tensor(
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            )  # NOP:  top = va
+            self.M_top[9] = torch.tensor(
+                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            )  # SWAP: top = vb
+            self.M_top[10] = torch.tensor(
+                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            )  # OVER: top = vb
+            self.M_top[11] = torch.tensor(
+                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            )  # ROT:  top = vc
 
             # Nonlinear ops: M_top rows stay zero — results computed in forward()
 
             # LOCAL ops use linear routing via the local_val input
-            self.M_top[OPCODE_IDX[OP_LOCAL_GET]] = torch.tensor([ 0.,  0.,  0.,  0.,  1.,  0.])  # LOCAL.GET: top = local_val
-            self.M_top[OPCODE_IDX[OP_LOCAL_SET]] = torch.tensor([ 0.,  0.,  1.,  0.,  0.,  0.])  # LOCAL.SET: top = val_b (new stack top after pop)
-            self.M_top[OPCODE_IDX[OP_LOCAL_TEE]] = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])  # LOCAL.TEE: top = val_a (stack top unchanged)
+            self.M_top[OPCODE_IDX[OP_LOCAL_GET]] = torch.tensor(
+                [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+            )  # LOCAL.GET: top = local_val
+            self.M_top[OPCODE_IDX[OP_LOCAL_SET]] = torch.tensor(
+                [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+            )  # LOCAL.SET: top = val_b (new stack top after pop)
+            self.M_top[OPCODE_IDX[OP_LOCAL_TEE]] = torch.tensor(
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            )  # LOCAL.TEE: top = val_a (stack top unchanged)
 
             # Memory ops: I32.LOAD uses heap_val, I32.STORE uses vc
-            self.M_top[OPCODE_IDX[OP_I32_LOAD]]  = torch.tensor([ 0.,  0.,  0.,  0.,  0.,  1.])  # I32.LOAD: top = heap_val
-            self.M_top[OPCODE_IDX[OP_I32_STORE]]  = torch.tensor([ 0.,  0.,  0.,  1.,  0.,  0.])  # I32.STORE: top = vc (after pop 2)
+            self.M_top[OPCODE_IDX[OP_I32_LOAD]] = torch.tensor(
+                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            )  # I32.LOAD: top = heap_val
+            self.M_top[OPCODE_IDX[OP_I32_STORE]] = torch.tensor(
+                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            )  # I32.STORE: top = vc (after pop 2)
             # Width load variants: nonlinear (handled in forward)
             # Width store variants: top = vc (linear)
-            self.M_top[OPCODE_IDX[OP_I32_STORE8]]  = torch.tensor([ 0.,  0.,  0.,  1.,  0.,  0.])
-            self.M_top[OPCODE_IDX[OP_I32_STORE16]] = torch.tensor([ 0.,  0.,  0.,  1.,  0.,  0.])
+            self.M_top[OPCODE_IDX[OP_I32_STORE8]] = torch.tensor(
+                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            )
+            self.M_top[OPCODE_IDX[OP_I32_STORE16]] = torch.tensor(
+                [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            )
 
             # CALL/RETURN: top = val_a (current stack top)
-            self.M_top[OPCODE_IDX[OP_CALL]]   = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])
-            self.M_top[OPCODE_IDX[OP_RETURN]] = torch.tensor([ 0.,  1.,  0.,  0.,  0.,  0.])
+            self.M_top[OPCODE_IDX[OP_CALL]] = torch.tensor(
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            )
+            self.M_top[OPCODE_IDX[OP_RETURN]] = torch.tensor(
+                [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            )
 
             # SP deltas
             # Indices 0-44: same as before
             # Indices 45-52: I32.LOAD(0), I32.STORE(-2), LOAD8_U(0), LOAD8_S(0),
             #                LOAD16_U(0), LOAD16_S(0), STORE8(-2), STORE16(-2)
             # CALL and RETURN sp_deltas are 0 — executor handles sp changes directly
-            self.sp_deltas.copy_(torch.tensor(
-                [1., -1., -1., 1., 0., -1., -1., -1., 0., 0., 1., 0.,
-                 -1., -1., -1., -1., -1.,
-                 0.,  -1., -1., -1., -1., -1., -1., -1., -1., -1., -1.,
-                 -1., -1., -1., -1., -1., -1., -1., -1.,
-                 0., 0., 0., 0., 0., -2.,
-                 1., -1., 0.,
-                 0., -2., 0., 0., 0., 0., -2., -2.,
-                 0., 0.]))
+            self.sp_deltas.copy_(
+                torch.tensor(
+                    [
+                        1.0,
+                        -1.0,
+                        -1.0,
+                        1.0,
+                        0.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        0.0,
+                        0.0,
+                        1.0,
+                        0.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        0.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        -1.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -2.0,
+                        1.0,
+                        -1.0,
+                        0.0,
+                        0.0,
+                        -2.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.0,
+                        -2.0,
+                        -2.0,
+                        0.0,
+                        0.0,
+                    ]
+                )
+            )
 
-    def forward(self, query_emb, prog_embs, stack_embs, local_embs=None, heap_embs=None,
-                call_embs=None, locals_base=0):
+    def forward(
+        self,
+        query_emb,
+        prog_embs,
+        stack_embs,
+        local_embs=None,
+        heap_embs=None,
+        call_embs=None,
+        locals_base=0,
+    ):
         """Execute one step.
 
         Returns (opcode, arg, sp_delta, top, opcode_one_hot, val_a, val_b, val_c, local_val, heap_val).
@@ -740,7 +938,11 @@ class CompiledModel(nn.Module):
             val_a_raw, _, idx_a = self.head_stack_a(query_emb, stack_embs)
             stored_addr_a = round(stack_embs[idx_a, DIM_STACK_KEY_0].item() / 2.0)
             queried_sp = round(query_emb[DIM_SP].item())
-            val_a = val_a_raw[0] if stored_addr_a == queried_sp else torch.tensor(0.0, dtype=DTYPE)
+            val_a = (
+                val_a_raw[0]
+                if stored_addr_a == queried_sp
+                else torch.tensor(0.0, dtype=DTYPE)
+            )
         else:
             val_a = torch.tensor(0.0, dtype=DTYPE)
 
@@ -749,7 +951,11 @@ class CompiledModel(nn.Module):
             val_b_raw, _, idx_b = self.head_stack_b(query_emb, stack_embs)
             stored_addr_b = round(stack_embs[idx_b, DIM_STACK_KEY_0].item() / 2.0)
             queried_sp_m1 = round(query_emb[DIM_SP].item()) - 1
-            val_b = val_b_raw[0] if stored_addr_b == queried_sp_m1 else torch.tensor(0.0, dtype=DTYPE)
+            val_b = (
+                val_b_raw[0]
+                if stored_addr_b == queried_sp_m1
+                else torch.tensor(0.0, dtype=DTYPE)
+            )
         else:
             val_b = torch.tensor(0.0, dtype=DTYPE)
 
@@ -758,7 +964,11 @@ class CompiledModel(nn.Module):
             val_c_raw, _, idx_c = self.head_stack_c(query_emb, stack_embs)
             stored_addr_c = round(stack_embs[idx_c, DIM_STACK_KEY_0].item() / 2.0)
             queried_sp_m2 = round(query_emb[DIM_SP].item()) - 2
-            val_c = val_c_raw[0] if stored_addr_c == queried_sp_m2 else torch.tensor(0.0, dtype=DTYPE)
+            val_c = (
+                val_c_raw[0]
+                if stored_addr_c == queried_sp_m2
+                else torch.tensor(0.0, dtype=DTYPE)
+            )
         else:
             val_c = torch.tensor(0.0, dtype=DTYPE)
 
@@ -773,7 +983,11 @@ class CompiledModel(nn.Module):
             local_val_raw, _, idx_l = self.head_local_val(local_query, local_embs)
             local_addr_raw, _, _ = self.head_local_addr(local_query, local_embs)
             stored_local_addr = round(local_addr_raw[0].item())
-            local_val = local_val_raw[0] if stored_local_addr == actual_local_idx else torch.tensor(0.0, dtype=DTYPE)
+            local_val = (
+                local_val_raw[0]
+                if stored_local_addr == actual_local_idx
+                else torch.tensor(0.0, dtype=DTYPE)
+            )
         else:
             local_val = torch.tensor(0.0, dtype=DTYPE)
 
@@ -793,7 +1007,11 @@ class CompiledModel(nn.Module):
             heap_val_raw, _, idx_h = self.head_heap_val(heap_query, heap_embs)
             heap_addr_raw, _, _ = self.head_heap_addr(heap_query, heap_embs)
             stored_heap_addr = round(heap_addr_raw[0].item())
-            heap_val = heap_val_raw[0] if stored_heap_addr == heap_query_addr else torch.tensor(0.0, dtype=DTYPE)
+            heap_val = (
+                heap_val_raw[0]
+                if stored_heap_addr == heap_query_addr
+                else torch.tensor(0.0, dtype=DTYPE)
+            )
         else:
             heap_val = torch.tensor(0.0, dtype=DTYPE)
 
@@ -803,10 +1021,16 @@ class CompiledModel(nn.Module):
         if idx >= 0:
             opcode_one_hot[idx] = 1.0
 
-        values = torch.stack([
-            torch.tensor(float(arg), dtype=DTYPE),
-            val_a, val_b, val_c, local_val, heap_val
-        ])
+        values = torch.stack(
+            [
+                torch.tensor(float(arg), dtype=DTYPE),
+                val_a,
+                val_b,
+                val_c,
+                local_val,
+                heap_val,
+            ]
+        )
         candidates = self.M_top @ values
         top_linear = (opcode_one_hot * candidates).sum()
 
@@ -826,9 +1050,9 @@ class CompiledModel(nn.Module):
             nonlinear[OPCODE_IDX[OP_REM_U]] = float(_trunc_rem(vb, va) & MASK32)
 
         # Comparison ops
-        nonlinear[OPCODE_IDX[OP_EQZ]]  = 1.0 if va == 0 else 0.0
-        nonlinear[OPCODE_IDX[OP_EQ]]   = 1.0 if va == vb else 0.0
-        nonlinear[OPCODE_IDX[OP_NE]]   = 1.0 if va != vb else 0.0
+        nonlinear[OPCODE_IDX[OP_EQZ]] = 1.0 if va == 0 else 0.0
+        nonlinear[OPCODE_IDX[OP_EQ]] = 1.0 if va == vb else 0.0
+        nonlinear[OPCODE_IDX[OP_NE]] = 1.0 if va != vb else 0.0
         nonlinear[OPCODE_IDX[OP_LT_S]] = 1.0 if vb < va else 0.0
         nonlinear[OPCODE_IDX[OP_LT_U]] = 1.0 if vb < va else 0.0
         nonlinear[OPCODE_IDX[OP_GT_S]] = 1.0 if vb > va else 0.0
@@ -839,21 +1063,21 @@ class CompiledModel(nn.Module):
         nonlinear[OPCODE_IDX[OP_GE_U]] = 1.0 if vb >= va else 0.0
 
         # Bitwise ops
-        nonlinear[OPCODE_IDX[OP_AND]]   = float(_to_i32(va) & _to_i32(vb))
-        nonlinear[OPCODE_IDX[OP_OR]]    = float(_to_i32(va) | _to_i32(vb))
-        nonlinear[OPCODE_IDX[OP_XOR]]   = float(_to_i32(va) ^ _to_i32(vb))
-        nonlinear[OPCODE_IDX[OP_SHL]]   = float((_to_i32(vb) << (int(va) & 31)) & MASK32)
+        nonlinear[OPCODE_IDX[OP_AND]] = float(_to_i32(va) & _to_i32(vb))
+        nonlinear[OPCODE_IDX[OP_OR]] = float(_to_i32(va) | _to_i32(vb))
+        nonlinear[OPCODE_IDX[OP_XOR]] = float(_to_i32(va) ^ _to_i32(vb))
+        nonlinear[OPCODE_IDX[OP_SHL]] = float((_to_i32(vb) << (int(va) & 31)) & MASK32)
         nonlinear[OPCODE_IDX[OP_SHR_S]] = float(_shr_s(vb, va))
         nonlinear[OPCODE_IDX[OP_SHR_U]] = float(_shr_u(vb, va))
-        nonlinear[OPCODE_IDX[OP_ROTL]]  = float(_rotl32(vb, va))
-        nonlinear[OPCODE_IDX[OP_ROTR]]  = float(_rotr32(vb, va))
+        nonlinear[OPCODE_IDX[OP_ROTL]] = float(_rotl32(vb, va))
+        nonlinear[OPCODE_IDX[OP_ROTR]] = float(_rotr32(vb, va))
 
         # Unary ops
-        nonlinear[OPCODE_IDX[OP_CLZ]]    = float(_clz32(va))
-        nonlinear[OPCODE_IDX[OP_CTZ]]    = float(_ctz32(va))
+        nonlinear[OPCODE_IDX[OP_CLZ]] = float(_clz32(va))
+        nonlinear[OPCODE_IDX[OP_CTZ]] = float(_ctz32(va))
         nonlinear[OPCODE_IDX[OP_POPCNT]] = float(_popcnt32(va))
-        nonlinear[OPCODE_IDX[OP_ABS]]    = float(abs(int(va)))
-        nonlinear[OPCODE_IDX[OP_NEG]]    = float((-int(va)) & MASK32)
+        nonlinear[OPCODE_IDX[OP_ABS]] = float(abs(int(va)))
+        nonlinear[OPCODE_IDX[OP_NEG]] = float((-int(va)) & MASK32)
 
         # Parametric: SELECT
         vc = round(val_c.item())
@@ -861,8 +1085,8 @@ class CompiledModel(nn.Module):
 
         # Width load variants (nonlinear masking/sign-extension of heap_val)
         hv = round(heap_val.item())
-        nonlinear[OPCODE_IDX[OP_I32_LOAD8_U]]  = float(int(hv) & 0xFF)
-        nonlinear[OPCODE_IDX[OP_I32_LOAD8_S]]  = float(_sign_extend_8(hv))
+        nonlinear[OPCODE_IDX[OP_I32_LOAD8_U]] = float(int(hv) & 0xFF)
+        nonlinear[OPCODE_IDX[OP_I32_LOAD8_S]] = float(_sign_extend_8(hv))
         nonlinear[OPCODE_IDX[OP_I32_LOAD16_U]] = float(int(hv) & 0xFFFF)
         nonlinear[OPCODE_IDX[OP_I32_LOAD16_S]] = float(_sign_extend_16(hv))
 
@@ -871,12 +1095,22 @@ class CompiledModel(nn.Module):
 
         sp_delta = (opcode_one_hot * self.sp_deltas).sum()
 
-        return (opcode, arg, int(sp_delta.item()), round(top.item()),
-                opcode_one_hot, round(val_a.item()), round(val_b.item()), round(val_c.item()),
-                round(local_val.item()), round(heap_val.item()))
+        return (
+            opcode,
+            arg,
+            int(sp_delta.item()),
+            round(top.item()),
+            opcode_one_hot,
+            round(val_a.item()),
+            round(val_b.item()),
+            round(val_c.item()),
+            round(local_val.item()),
+            round(heap_val.item()),
+        )
 
 
 # ─── PyTorch Executor ────────────────────────────────────────────
+
 
 class TorchExecutor:
     """Executes programs using CompiledModel.
@@ -891,10 +1125,9 @@ class TorchExecutor:
     def execute(self, prog, max_steps=50000):
         trace = Trace(program=prog)
 
-        prog_embs = torch.stack([
-            embed_program_token(i, instr)
-            for i, instr in enumerate(prog)
-        ])
+        prog_embs = torch.stack(
+            [embed_program_token(i, instr) for i, instr in enumerate(prog)]
+        )
 
         stack_embs_list = []
         local_embs_list = []
@@ -915,22 +1148,47 @@ class TorchExecutor:
                     break
 
                 query = embed_state(ip, sp)
-                stack_embs = (torch.stack(stack_embs_list)
-                              if stack_embs_list
-                              else torch.zeros(0, D_MODEL, dtype=DTYPE))
-                local_embs = (torch.stack(local_embs_list)
-                              if local_embs_list
-                              else torch.zeros(0, D_MODEL, dtype=DTYPE))
-                heap_embs = (torch.stack(heap_embs_list)
-                             if heap_embs_list
-                             else torch.zeros(0, D_MODEL, dtype=DTYPE))
-                call_embs = (torch.stack(call_embs_list)
-                             if call_embs_list
-                             else torch.zeros(0, D_MODEL, dtype=DTYPE))
+                stack_embs = (
+                    torch.stack(stack_embs_list)
+                    if stack_embs_list
+                    else torch.zeros(0, D_MODEL, dtype=DTYPE)
+                )
+                local_embs = (
+                    torch.stack(local_embs_list)
+                    if local_embs_list
+                    else torch.zeros(0, D_MODEL, dtype=DTYPE)
+                )
+                heap_embs = (
+                    torch.stack(heap_embs_list)
+                    if heap_embs_list
+                    else torch.zeros(0, D_MODEL, dtype=DTYPE)
+                )
+                call_embs = (
+                    torch.stack(call_embs_list)
+                    if call_embs_list
+                    else torch.zeros(0, D_MODEL, dtype=DTYPE)
+                )
 
-                opcode, arg, sp_delta, top, _, val_a, val_b, val_c, local_val, heap_val = \
-                    self.model.forward(query, prog_embs, stack_embs, local_embs, heap_embs,
-                                       call_embs, locals_base)
+                (
+                    opcode,
+                    arg,
+                    sp_delta,
+                    top,
+                    _,
+                    val_a,
+                    val_b,
+                    val_c,
+                    local_val,
+                    heap_val,
+                ) = self.model.forward(
+                    query,
+                    prog_embs,
+                    stack_embs,
+                    local_embs,
+                    heap_embs,
+                    call_embs,
+                    locals_base,
+                )
 
                 if opcode == OP_HALT:
                     trace.steps.append(TraceStep(opcode, arg, sp, top))
@@ -950,91 +1208,124 @@ class TorchExecutor:
 
                 # Stack writes per opcode
                 if opcode in (OP_PUSH, OP_DUP, OP_OVER):
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
-                elif opcode in (OP_ADD, OP_SUB, OP_MUL, OP_DIV_S, OP_DIV_U,
-                                OP_REM_S, OP_REM_U,
-                                OP_EQ, OP_NE,
-                                OP_LT_S, OP_LT_U, OP_GT_S, OP_GT_U,
-                                OP_LE_S, OP_LE_U, OP_GE_S, OP_GE_U,
-                                OP_AND, OP_OR, OP_XOR,
-                                OP_SHL, OP_SHR_S, OP_SHR_U,
-                                OP_ROTL, OP_ROTR):
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                elif opcode in (
+                    OP_ADD,
+                    OP_SUB,
+                    OP_MUL,
+                    OP_DIV_S,
+                    OP_DIV_U,
+                    OP_REM_S,
+                    OP_REM_U,
+                    OP_EQ,
+                    OP_NE,
+                    OP_LT_S,
+                    OP_LT_U,
+                    OP_GT_S,
+                    OP_GT_U,
+                    OP_LE_S,
+                    OP_LE_U,
+                    OP_GE_S,
+                    OP_GE_U,
+                    OP_AND,
+                    OP_OR,
+                    OP_XOR,
+                    OP_SHL,
+                    OP_SHR_S,
+                    OP_SHR_U,
+                    OP_ROTL,
+                    OP_ROTR,
+                ):
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode in (OP_EQZ, OP_CLZ, OP_CTZ, OP_POPCNT, OP_ABS, OP_NEG):
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode == OP_SELECT:
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode == OP_SWAP:
-                    stack_embs_list.append(
-                        embed_stack_entry(sp, val_b, write_count))
+                    stack_embs_list.append(embed_stack_entry(sp, val_b, write_count))
                     write_count += 1
                     stack_embs_list.append(
-                        embed_stack_entry(sp - 1, val_a, write_count))
+                        embed_stack_entry(sp - 1, val_a, write_count)
+                    )
                     write_count += 1
                 elif opcode == OP_ROT:
-                    stack_embs_list.append(
-                        embed_stack_entry(sp, val_c, write_count))
+                    stack_embs_list.append(embed_stack_entry(sp, val_c, write_count))
                     write_count += 1
                     stack_embs_list.append(
-                        embed_stack_entry(sp - 1, val_a, write_count))
+                        embed_stack_entry(sp - 1, val_a, write_count)
+                    )
                     write_count += 1
                     stack_embs_list.append(
-                        embed_stack_entry(sp - 2, val_b, write_count))
+                        embed_stack_entry(sp - 2, val_b, write_count)
+                    )
                     write_count += 1
                 elif opcode == OP_LOCAL_GET:
                     # Push fetched local value onto stack
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode == OP_LOCAL_SET:
                     # Pop stack top, write to locals space (with base offset)
                     local_embs_list.append(
-                        embed_local_entry(locals_base + arg, val_a, local_write_count))
+                        embed_local_entry(locals_base + arg, val_a, local_write_count)
+                    )
                     local_write_count += 1
                 elif opcode == OP_LOCAL_TEE:
                     # Copy stack top to locals space (no pop, with base offset)
                     local_embs_list.append(
-                        embed_local_entry(locals_base + arg, val_a, local_write_count))
+                        embed_local_entry(locals_base + arg, val_a, local_write_count)
+                    )
                     local_write_count += 1
 
                 # Memory ops: stack writes + heap side effects
                 elif opcode == OP_I32_LOAD:
                     # Overwrite stack[SP] with loaded value (sp_delta=0)
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
-                elif opcode in (OP_I32_LOAD8_U, OP_I32_LOAD8_S,
-                                OP_I32_LOAD16_U, OP_I32_LOAD16_S):
-                    stack_embs_list.append(
-                        embed_stack_entry(new_sp, top, write_count))
+                elif opcode in (
+                    OP_I32_LOAD8_U,
+                    OP_I32_LOAD8_S,
+                    OP_I32_LOAD16_U,
+                    OP_I32_LOAD16_S,
+                ):
+                    stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
                 elif opcode == OP_I32_STORE:
                     # Write val_a (stack top) to heap at addr val_b (stack[SP-1])
                     heap_embs_list.append(
-                        embed_heap_entry(int(val_b), val_a, heap_write_count))
+                        embed_heap_entry(int(val_b), val_a, heap_write_count)
+                    )
                     heap_write_count += 1
                 elif opcode == OP_I32_STORE8:
                     heap_embs_list.append(
-                        embed_heap_entry(int(val_b), int(val_a) & 0xFF, heap_write_count))
+                        embed_heap_entry(
+                            int(val_b), int(val_a) & 0xFF, heap_write_count
+                        )
+                    )
                     heap_write_count += 1
                 elif opcode == OP_I32_STORE16:
                     heap_embs_list.append(
-                        embed_heap_entry(int(val_b), int(val_a) & 0xFFFF, heap_write_count))
+                        embed_heap_entry(
+                            int(val_b), int(val_a) & 0xFFFF, heap_write_count
+                        )
+                    )
                     heap_write_count += 1
 
                 # CALL/RETURN: complex state changes handled here
                 elif opcode == OP_CALL:
                     call_stack.append((ip + 1, sp, locals_base))
                     call_embs_list.append(
-                        embed_call_frame(len(call_stack) - 1, ip + 1, sp, locals_base, call_write_count))
+                        embed_call_frame(
+                            len(call_stack) - 1,
+                            ip + 1,
+                            sp,
+                            locals_base,
+                            call_write_count,
+                        )
+                    )
                     call_write_count += 1
                     locals_base = len(local_embs_list)
                     # sp unchanged, top = current stack top
@@ -1048,8 +1339,7 @@ class TorchExecutor:
                     ret_val = val_a  # current stack top
                     ret_addr, saved_sp, saved_locals_base = call_stack.pop()
                     sp = saved_sp + 1
-                    stack_embs_list.append(
-                        embed_stack_entry(sp, ret_val, write_count))
+                    stack_embs_list.append(embed_stack_entry(sp, ret_val, write_count))
                     write_count += 1
                     locals_base = saved_locals_base
                     trace.steps.append(TraceStep(opcode, arg, sp, int(ret_val)))

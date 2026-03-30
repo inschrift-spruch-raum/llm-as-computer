@@ -12,34 +12,61 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from isa import (
-    Instruction, Trace, TraceStep,
-    compare_traces, test_algorithm, test_trap_algorithm,
-    D_MODEL, N_OPCODES,
-    OP_PUSH, OP_POP, OP_ADD, OP_DUP, OP_HALT,
-    OP_SUB, OP_JZ, OP_JNZ, OP_NOP,
-    OP_SWAP, OP_OVER, OP_ROT,
-    OP_MUL, OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE,
-    OP_I32_LOAD, OP_I32_STORE,
-    OP_I32_LOAD8_U, OP_I32_LOAD8_S,
-    OP_I32_LOAD16_U, OP_I32_LOAD16_S,
-    OP_I32_STORE8, OP_I32_STORE16,
+from llm_as_computer.isa import (
+    Instruction,
+    Trace,
+    TraceStep,
+    compare_traces,
+    test_algorithm,
+    test_trap_algorithm,
+    D_MODEL,
+    N_OPCODES,
+    OP_PUSH,
+    OP_POP,
+    OP_ADD,
+    OP_DUP,
+    OP_HALT,
+    OP_SUB,
+    OP_JZ,
+    OP_JNZ,
+    OP_NOP,
+    OP_SWAP,
+    OP_OVER,
+    OP_ROT,
+    OP_MUL,
+    OP_LOCAL_GET,
+    OP_LOCAL_SET,
+    OP_LOCAL_TEE,
+    OP_I32_LOAD,
+    OP_I32_STORE,
+    OP_I32_LOAD8_U,
+    OP_I32_LOAD8_S,
+    OP_I32_LOAD16_U,
+    OP_I32_LOAD16_S,
+    OP_I32_STORE8,
+    OP_I32_STORE16,
     OP_NAMES,
 )
-from executor import NumPyExecutor, CompiledModel, TorchExecutor
-from programs import ALL_TESTS, make_fibonacci, make_power_of_2, make_sum_1_to_n
+from llm_as_computer.executor import NumPyExecutor, CompiledModel, TorchExecutor
+from llm_as_computer.programs import (
+    ALL_TESTS,
+    make_fibonacci,
+    make_power_of_2,
+    make_sum_1_to_n,
+)
 
 
 # ─── Test Programs ──────────────────────────────────────────────
 
+
 def test_store_and_load():
     """Store 42 at addr 0, load it back. → 42"""
     prog = [
-        Instruction(OP_PUSH, 0),       # addr
-        Instruction(OP_PUSH, 42),      # val
-        Instruction(OP_I32_STORE),     # memory[0] = 42
-        Instruction(OP_PUSH, 0),       # addr
-        Instruction(OP_I32_LOAD),      # load memory[0]
+        Instruction(OP_PUSH, 0),  # addr
+        Instruction(OP_PUSH, 42),  # val
+        Instruction(OP_I32_STORE),  # memory[0] = 42
+        Instruction(OP_PUSH, 0),  # addr
+        Instruction(OP_I32_LOAD),  # load memory[0]
         Instruction(OP_HALT),
     ]
     return prog, 42
@@ -182,41 +209,41 @@ def test_array_sum():
     """Store [10, 20, 30] at addrs 0-2, sum via loop with locals."""
     prog = [
         # Store array
-        Instruction(OP_PUSH, 0),          # 0
-        Instruction(OP_PUSH, 10),         # 1
-        Instruction(OP_I32_STORE),        # 2
-        Instruction(OP_PUSH, 1),          # 3
-        Instruction(OP_PUSH, 20),         # 4
-        Instruction(OP_I32_STORE),        # 5
-        Instruction(OP_PUSH, 2),          # 6
-        Instruction(OP_PUSH, 30),         # 7
-        Instruction(OP_I32_STORE),        # 8
+        Instruction(OP_PUSH, 0),  # 0
+        Instruction(OP_PUSH, 10),  # 1
+        Instruction(OP_I32_STORE),  # 2
+        Instruction(OP_PUSH, 1),  # 3
+        Instruction(OP_PUSH, 20),  # 4
+        Instruction(OP_I32_STORE),  # 5
+        Instruction(OP_PUSH, 2),  # 6
+        Instruction(OP_PUSH, 30),  # 7
+        Instruction(OP_I32_STORE),  # 8
         # Init: acc=0 (local[0]), i=0 (local[1])
-        Instruction(OP_PUSH, 0),          # 9
-        Instruction(OP_LOCAL_SET, 0),     # 10: acc = 0
-        Instruction(OP_PUSH, 0),          # 11
-        Instruction(OP_LOCAL_SET, 1),     # 12: i = 0
+        Instruction(OP_PUSH, 0),  # 9
+        Instruction(OP_LOCAL_SET, 0),  # 10: acc = 0
+        Instruction(OP_PUSH, 0),  # 11
+        Instruction(OP_LOCAL_SET, 1),  # 12: i = 0
         # Loop (ip=13):
-        Instruction(OP_LOCAL_GET, 1),     # 13: push i
-        Instruction(OP_PUSH, 3),          # 14: push len
-        Instruction(OP_SUB),             # 15: i - len (0 when i == len)
-        Instruction(OP_JZ, 28),           # 16: if i == len, exit loop
+        Instruction(OP_LOCAL_GET, 1),  # 13: push i
+        Instruction(OP_PUSH, 3),  # 14: push len
+        Instruction(OP_SUB),  # 15: i - len (0 when i == len)
+        Instruction(OP_JZ, 28),  # 16: if i == len, exit loop
         # Load memory[i], add to acc
-        Instruction(OP_LOCAL_GET, 1),     # 17: push i
-        Instruction(OP_I32_LOAD),         # 18: load memory[i]
-        Instruction(OP_LOCAL_GET, 0),     # 19: push acc
-        Instruction(OP_ADD),              # 20: acc + memory[i]
-        Instruction(OP_LOCAL_SET, 0),     # 21: acc = acc + memory[i]
+        Instruction(OP_LOCAL_GET, 1),  # 17: push i
+        Instruction(OP_I32_LOAD),  # 18: load memory[i]
+        Instruction(OP_LOCAL_GET, 0),  # 19: push acc
+        Instruction(OP_ADD),  # 20: acc + memory[i]
+        Instruction(OP_LOCAL_SET, 0),  # 21: acc = acc + memory[i]
         # i++
-        Instruction(OP_LOCAL_GET, 1),     # 22: push i
-        Instruction(OP_PUSH, 1),          # 23
-        Instruction(OP_ADD),              # 24: i + 1
-        Instruction(OP_LOCAL_SET, 1),     # 25: i = i + 1
-        Instruction(OP_PUSH, 1),          # 26
-        Instruction(OP_JNZ, 13),          # 27: unconditional jump to loop
+        Instruction(OP_LOCAL_GET, 1),  # 22: push i
+        Instruction(OP_PUSH, 1),  # 23
+        Instruction(OP_ADD),  # 24: i + 1
+        Instruction(OP_LOCAL_SET, 1),  # 25: i = i + 1
+        Instruction(OP_PUSH, 1),  # 26
+        Instruction(OP_JNZ, 13),  # 27: unconditional jump to loop
         # Done
-        Instruction(OP_LOCAL_GET, 0),     # 28: push acc
-        Instruction(OP_HALT),             # 29
+        Instruction(OP_LOCAL_GET, 0),  # 28: push acc
+        Instruction(OP_HALT),  # 29
     ]
     return prog, 60
 
@@ -242,22 +269,23 @@ def test_memory_with_locals():
 # ─── All Phase 16 Tests ──────────────────────────────────────────
 
 PHASE16_TESTS = [
-    ("store_and_load",      test_store_and_load),
-    ("multiple_addresses",  test_multiple_addresses),
-    ("uninitialized_load",  test_uninitialized_load),
-    ("overwrite_memory",    test_overwrite_memory),
-    ("store8_mask",         test_store8_mask),
-    ("store16_mask",        test_store16_mask),
-    ("load8_u",             test_load8_u),
-    ("load8_s",             test_load8_s),
-    ("load16_u",            test_load16_u),
-    ("load16_s",            test_load16_s),
-    ("array_sum",           test_array_sum),
-    ("memory_with_locals",  test_memory_with_locals),
+    ("store_and_load", test_store_and_load),
+    ("multiple_addresses", test_multiple_addresses),
+    ("uninitialized_load", test_uninitialized_load),
+    ("overwrite_memory", test_overwrite_memory),
+    ("store8_mask", test_store8_mask),
+    ("store16_mask", test_store16_mask),
+    ("load8_u", test_load8_u),
+    ("load8_s", test_load8_s),
+    ("load16_u", test_load16_u),
+    ("load16_s", test_load16_s),
+    ("array_sum", test_array_sum),
+    ("memory_with_locals", test_memory_with_locals),
 ]
 
 
 # ─── Test Runners ────────────────────────────────────────────────
+
 
 def test_linear_memory():
     """Test all I32.LOAD/STORE programs on both executors."""
@@ -304,18 +332,40 @@ def test_regression():
 
     # Phase 11 extended tests
     ext_tests = [
-        ("sub_basic",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
-          Instruction(OP_SUB), Instruction(OP_HALT)], 7),
-        ("loop_countdown",
-         [Instruction(OP_PUSH, 3), Instruction(OP_DUP),
-          Instruction(OP_PUSH, 1), Instruction(OP_SUB),
-          Instruction(OP_DUP), Instruction(OP_JNZ, 1),
-          Instruction(OP_HALT)], 0),
-        ("jz_taken",
-         [Instruction(OP_PUSH, 0), Instruction(OP_JZ, 3),
-          Instruction(OP_HALT),
-          Instruction(OP_PUSH, 42), Instruction(OP_HALT)], 42),
+        (
+            "sub_basic",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 3),
+                Instruction(OP_SUB),
+                Instruction(OP_HALT),
+            ],
+            7,
+        ),
+        (
+            "loop_countdown",
+            [
+                Instruction(OP_PUSH, 3),
+                Instruction(OP_DUP),
+                Instruction(OP_PUSH, 1),
+                Instruction(OP_SUB),
+                Instruction(OP_DUP),
+                Instruction(OP_JNZ, 1),
+                Instruction(OP_HALT),
+            ],
+            0,
+        ),
+        (
+            "jz_taken",
+            [
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_JZ, 3),
+                Instruction(OP_HALT),
+                Instruction(OP_PUSH, 42),
+                Instruction(OP_HALT),
+            ],
+            42,
+        ),
     ]
     for name, prog, expected in ext_tests:
         ok, _ = test_algorithm(name, prog, expected, np_exec, pt_exec)
@@ -337,6 +387,7 @@ def test_regression():
 
     # Phase 15 local variable tests
     from phase15_local_variables import PHASE15_TESTS
+
     for name, test_fn in PHASE15_TESTS:
         prog, expected = test_fn()
         ok, _ = test_algorithm(f"p15_{name}", prog, expected, np_exec, pt_exec)
@@ -402,12 +453,16 @@ def test_model_summary():
     # Verify sp_deltas size
     ok = model.sp_deltas.shape[0] == N_OPCODES
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  sp_deltas size = {model.sp_deltas.shape[0]} (expected {N_OPCODES})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  sp_deltas size = {model.sp_deltas.shape[0]} (expected {N_OPCODES})"
+    )
 
     # Verify M_top size
     ok = model.M_top.shape == (N_OPCODES, 6)
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  M_top shape = {tuple(model.M_top.shape)} (expected ({N_OPCODES}, 6))")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  M_top shape = {tuple(model.M_top.shape)} (expected ({N_OPCODES}, 6))"
+    )
 
     return all(checks)
 
@@ -437,7 +492,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 42 and pt_top == 42
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  STORE+LOAD roundtrip (np={np_top}, pt={pt_top})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  STORE+LOAD roundtrip (np={np_top}, pt={pt_top})"
+    )
 
     # 2. LOAD from untouched address returns 0
     prog = [
@@ -451,7 +508,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 0 and pt_top == 0
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  Untouched addr returns 0 (np={np_top}, pt={pt_top})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  Untouched addr returns 0 (np={np_top}, pt={pt_top})"
+    )
 
     # 3. STORE8 masks to low 8 bits
     prog = [
@@ -468,7 +527,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 0xFF and pt_top == 0xFF
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  STORE8 masks (np={np_top}, pt={pt_top}, expected=255)")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  STORE8 masks (np={np_top}, pt={pt_top}, expected=255)"
+    )
 
     # 4. STORE16 masks to low 16 bits
     prog = [
@@ -485,7 +546,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 0xFFFF and pt_top == 0xFFFF
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  STORE16 masks (np={np_top}, pt={pt_top}, expected=65535)")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  STORE16 masks (np={np_top}, pt={pt_top}, expected=65535)"
+    )
 
     # 5. LOAD8_S sign-extends (0x80 → -128)
     prog = [
@@ -502,7 +565,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == -128 and pt_top == -128
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  LOAD8_S sign-extends (np={np_top}, pt={pt_top}, expected=-128)")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  LOAD8_S sign-extends (np={np_top}, pt={pt_top}, expected=-128)"
+    )
 
     # 6. LOAD8_U zero-extends (0x80 → 128)
     prog = [
@@ -519,7 +584,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 128 and pt_top == 128
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  LOAD8_U zero-extends (np={np_top}, pt={pt_top}, expected=128)")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  LOAD8_U zero-extends (np={np_top}, pt={pt_top}, expected=128)"
+    )
 
     # 7. All traces match (numpy vs pytorch)
     trace_match_ok = True
@@ -532,7 +599,9 @@ def test_invariants():
             print(f"  FAIL  Trace mismatch for {name}: {detail}")
             trace_match_ok = False
     checks.append(trace_match_ok)
-    print(f"  {'PASS' if trace_match_ok else 'FAIL'}  All traces match (numpy vs pytorch)")
+    print(
+        f"  {'PASS' if trace_match_ok else 'FAIL'}  All traces match (numpy vs pytorch)"
+    )
 
     print(f"\n  Invariants: {sum(checks)}/{len(checks)} passed")
     return all(checks)

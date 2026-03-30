@@ -142,7 +142,7 @@ if __name__ == "__main__":
 每条测试必须同时验证 **NumPyExecutor** 和 **TorchExecutor** 的输出一致。使用 `isa.py` 中的 `compare_traces()` 函数进行逐步对比。
 
 ```python
-from isa import compare_traces
+from llm_as_computer.isa import compare_traces
 
 np_trace = np_executor.run(program)
 torch_trace = torch_executor.run(program)

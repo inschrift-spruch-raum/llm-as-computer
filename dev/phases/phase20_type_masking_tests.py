@@ -28,26 +28,29 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from isa import compare_traces
-from executor import NumPyExecutor, TorchExecutor
-from assembler import compile_structured
+from llm_as_computer.isa import compare_traces
+from llm_as_computer.executor import NumPyExecutor, TorchExecutor
+from llm_as_computer.assembler import compile_structured
 
 MASK32 = 0xFFFFFFFF
 
 
 # ─── Program builders ────────────────────────────────────────────────────────
 
+
 def prog_add_overflow():
     """PUSH 0xFFFFFFFF; PUSH 1; ADD → 0 (wraps to zero).
 
     Without masking: 0x100000000. With masking: 0.
     """
-    prog = compile_structured([
-        ('PUSH', 0xFFFFFFFF),
-        ('PUSH', 1),
-        ('ADD',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 0xFFFFFFFF),
+            ("PUSH", 1),
+            ("ADD",),
+            ("HALT",),
+        ]
+    )
     return prog, 0
 
 
@@ -56,12 +59,14 @@ def prog_mul_overflow():
 
     Without masking: 4294967296. With masking: 0.
     """
-    prog = compile_structured([
-        ('PUSH', 0x10000),
-        ('PUSH', 0x10000),
-        ('MUL',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 0x10000),
+            ("PUSH", 0x10000),
+            ("MUL",),
+            ("HALT",),
+        ]
+    )
     return prog, 0
 
 
@@ -71,12 +76,14 @@ def prog_sub_wrap():
     Stack: va=1 (top), vb=0 (below).  result = vb - va = 0 - 1 = -1.
     Without masking: -1. With masking: 0xFFFFFFFF = 4294967295.
     """
-    prog = compile_structured([
-        ('PUSH', 0),
-        ('PUSH', 1),
-        ('SUB',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 0),
+            ("PUSH", 1),
+            ("SUB",),
+            ("HALT",),
+        ]
+    )
     return prog, 0xFFFFFFFF
 
 
@@ -85,11 +92,13 @@ def prog_neg_positive():
 
     Without masking: -1. With masking: 4294967295.
     """
-    prog = compile_structured([
-        ('PUSH', 1),
-        ('NEG',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 1),
+            ("NEG",),
+            ("HALT",),
+        ]
+    )
     return prog, 0xFFFFFFFF
 
 
@@ -105,35 +114,32 @@ def prog_loop_add_overflow():
     Each iteration: acc = acc + 1; counter -= 1; exit when counter == 0.
     Final acc = (0xFFFFFFFE + 3) & MASK32 = 1.
     """
-    prog = compile_structured([
-        ('PUSH', 3),
-        ('LOCAL.SET', 0),          # counter = 3
-        ('PUSH', 0xFFFFFFFE),
-        ('LOCAL.SET', 1),          # acc = 0xFFFFFFFE
-
-        ('BLOCK',),
-          ('LOOP',),
-            ('LOCAL.GET', 0),      # counter
-            ('EQZ',),
-            ('BR_IF', 1),          # exit BLOCK when counter == 0
-
-            ('LOCAL.GET', 1),      # acc
-            ('PUSH', 1),
-            ('ADD',),              # acc + 1 (wraps on 3rd iter: 0xFFFFFFFF+1=0)
-            ('LOCAL.SET', 1),
-
-            ('LOCAL.GET', 0),
-            ('PUSH', 1),
-            ('SUB',),              # counter - 1
-            ('LOCAL.SET', 0),
-
-            ('BR', 0),             # continue LOOP
-          ('END',),
-        ('END',),
-
-        ('LOCAL.GET', 1),          # push final acc
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 3),
+            ("LOCAL.SET", 0),  # counter = 3
+            ("PUSH", 0xFFFFFFFE),
+            ("LOCAL.SET", 1),  # acc = 0xFFFFFFFE
+            ("BLOCK",),
+            ("LOOP",),
+            ("LOCAL.GET", 0),  # counter
+            ("EQZ",),
+            ("BR_IF", 1),  # exit BLOCK when counter == 0
+            ("LOCAL.GET", 1),  # acc
+            ("PUSH", 1),
+            ("ADD",),  # acc + 1 (wraps on 3rd iter: 0xFFFFFFFF+1=0)
+            ("LOCAL.SET", 1),
+            ("LOCAL.GET", 0),
+            ("PUSH", 1),
+            ("SUB",),  # counter - 1
+            ("LOCAL.SET", 0),
+            ("BR", 0),  # continue LOOP
+            ("END",),
+            ("END",),
+            ("LOCAL.GET", 1),  # push final acc
+            ("HALT",),
+        ]
+    )
     # 0xFFFFFFFE + 1 = 0xFFFFFFFF
     # 0xFFFFFFFF + 1 = 0x00000000 (wrap)
     # 0x00000000 + 1 = 0x00000001
@@ -149,17 +155,19 @@ def prog_if_overflow_branch():
 
     Without masking the ADD, result would be 0x100000001.
     """
-    prog = compile_structured([
-        ('PUSH', 1),               # condition = true
-        ('IF',),
-          ('PUSH', 0xFFFFFFFF),
-          ('PUSH', 2),
-          ('ADD',),                # (0xFFFFFFFF + 2) & MASK32 = 1
-        ('ELSE',),
-          ('PUSH', 999),           # unreachable
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 1),  # condition = true
+            ("IF",),
+            ("PUSH", 0xFFFFFFFF),
+            ("PUSH", 2),
+            ("ADD",),  # (0xFFFFFFFF + 2) & MASK32 = 1
+            ("ELSE",),
+            ("PUSH", 999),  # unreachable
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 1
 
 
@@ -177,26 +185,27 @@ def prog_br_table_overflow():
 
     This proves that overflow-masked results can drive control flow correctly.
     """
-    prog = compile_structured([
-        # Compute overflow: result = 0
-        ('PUSH', 0xFFFFFFFF),
-        ('PUSH', 1),
-        ('ADD',),                  # (0xFFFFFFFF + 1) & MASK32 = 0
-        # index is now on stack
-
-        ('BLOCK',),                # done  (depth 2 = default target)
-          ('BLOCK',),              # case1 (depth 1)
-            ('BLOCK',),            # case0 (depth 0)
-              ('BR_TABLE', [0, 1], 2),
-            ('END',),              # case0 END → case0 body
-            ('PUSH', 10),
-            ('BR', 1),             # exit done BLOCK → HALT at done_end
-          ('END',),                # case1 END → case1 body
-          ('PUSH', 20),
-          ('BR', 0),               # exit done BLOCK → HALT at done_end
-        ('END',),                  # done END = position of HALT
-        ('HALT',),                 # matched cases land here; default also lands here
-    ])
+    prog = compile_structured(
+        [
+            # Compute overflow: result = 0
+            ("PUSH", 0xFFFFFFFF),
+            ("PUSH", 1),
+            ("ADD",),  # (0xFFFFFFFF + 1) & MASK32 = 0
+            # index is now on stack
+            ("BLOCK",),  # done  (depth 2 = default target)
+            ("BLOCK",),  # case1 (depth 1)
+            ("BLOCK",),  # case0 (depth 0)
+            ("BR_TABLE", [0, 1], 2),
+            ("END",),  # case0 END → case0 body
+            ("PUSH", 10),
+            ("BR", 1),  # exit done BLOCK → HALT at done_end
+            ("END",),  # case1 END → case1 body
+            ("PUSH", 20),
+            ("BR", 0),  # exit done BLOCK → HALT at done_end
+            ("END",),  # done END = position of HALT
+            ("HALT",),  # matched cases land here; default also lands here
+        ]
+    )
     return prog, 10
 
 
@@ -206,35 +215,38 @@ def prog_overflow_in_else():
     Condition is false → ELSE body executes.
     Expected top: 1.
     """
-    prog = compile_structured([
-        ('PUSH', 0),               # condition = false
-        ('IF',),
-          ('PUSH', 999),           # skipped
-        ('ELSE',),
-          ('PUSH', 0xFFFFFFFF),
-          ('PUSH', 2),
-          ('ADD',),                # (0xFFFFFFFF + 2) & MASK32 = 1
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 0),  # condition = false
+            ("IF",),
+            ("PUSH", 999),  # skipped
+            ("ELSE",),
+            ("PUSH", 0xFFFFFFFF),
+            ("PUSH", 2),
+            ("ADD",),  # (0xFFFFFFFF + 2) & MASK32 = 1
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 1
 
 
 # ─── All test cases ───────────────────────────────────────────────────────────
 
 MASKING_TESTS = [
-    ("i32_add_overflow",    prog_add_overflow),
-    ("i32_mul_overflow",    prog_mul_overflow),
-    ("i32_sub_wrap",        prog_sub_wrap),
-    ("i32_neg_positive",    prog_neg_positive),
-    ("loop_add_overflow",   prog_loop_add_overflow),
-    ("if_overflow_branch",  prog_if_overflow_branch),
-    ("br_table_overflow",   prog_br_table_overflow),
-    ("overflow_in_else",    prog_overflow_in_else),
+    ("i32_add_overflow", prog_add_overflow),
+    ("i32_mul_overflow", prog_mul_overflow),
+    ("i32_sub_wrap", prog_sub_wrap),
+    ("i32_neg_positive", prog_neg_positive),
+    ("loop_add_overflow", prog_loop_add_overflow),
+    ("if_overflow_branch", prog_if_overflow_branch),
+    ("br_table_overflow", prog_br_table_overflow),
+    ("overflow_in_else", prog_overflow_in_else),
 ]
 
 
 # ─── Test runners ─────────────────────────────────────────────────────────────
+
 
 def test_masking_programs(verbose=False):
     """Run all masking programs on both executors; check expected top value."""
@@ -254,10 +266,12 @@ def test_masking_programs(verbose=False):
         for label, exc in [("numpy", np_exec), ("torch", pt_exec)]:
             trace = exc.execute(prog)
             top = trace.steps[-1].top if trace.steps else None
-            ok = (top == expected)
+            ok = top == expected
             passed += ok
             status = "PASS" if ok else "FAIL"
-            print(f"  {status}  {label:5s}  {name:<30s}  expected={expected:>12}  got={top}")
+            print(
+                f"  {status}  {label:5s}  {name:<30s}  expected={expected:>12}  got={top}"
+            )
 
         if verbose:
             prog_len = len(prog)
@@ -304,20 +318,22 @@ def test_without_masking_would_fail():
 
     # For each overflow test, compute unmasked result and confirm it differs
     unmasked_cases = [
-        ("i32_add_overflow",  0xFFFFFFFF + 1,     0),           # unmasked=0x100000000, expected=0
-        ("i32_mul_overflow",  0x10000 * 0x10000,  0),           # unmasked=4294967296, expected=0
-        ("i32_sub_wrap",      0 - 1,              0xFFFFFFFF),  # unmasked=-1, expected=4294967295
-        ("i32_neg_positive",  -1,                 0xFFFFFFFF),  # unmasked=-1, expected=4294967295
-        ("if_overflow_branch", 0xFFFFFFFF + 2,    1),           # unmasked=0x100000001, expected=1
-        ("overflow_in_else",  0xFFFFFFFF + 2,     1),           # unmasked=0x100000001, expected=1
+        ("i32_add_overflow", 0xFFFFFFFF + 1, 0),  # unmasked=0x100000000, expected=0
+        ("i32_mul_overflow", 0x10000 * 0x10000, 0),  # unmasked=4294967296, expected=0
+        ("i32_sub_wrap", 0 - 1, 0xFFFFFFFF),  # unmasked=-1, expected=4294967295
+        ("i32_neg_positive", -1, 0xFFFFFFFF),  # unmasked=-1, expected=4294967295
+        ("if_overflow_branch", 0xFFFFFFFF + 2, 1),  # unmasked=0x100000001, expected=1
+        ("overflow_in_else", 0xFFFFFFFF + 2, 1),  # unmasked=0x100000001, expected=1
     ]
 
     passed = True
     for name, unmasked, expected in unmasked_cases:
-        differs = (unmasked != expected)
+        differs = unmasked != expected
         passed = passed and differs
         status = "OK  " if differs else "SKIP"
-        print(f"  {status}  {name:<30s}  unmasked={unmasked:>14}  expected={expected:>12}")
+        print(
+            f"  {status}  {name:<30s}  unmasked={unmasked:>14}  expected={expected:>12}"
+        )
 
     print(f"\n  All overflow tests have unmasked≠expected: {passed}")
     return passed
@@ -329,7 +345,7 @@ def test_regression():
     print("Phase 20: Regression — consolidated + phase19")
     print("=" * 60)
 
-    from programs import ALL_TESTS
+    from llm_as_computer.programs import ALL_TESTS
     from phase19_structured_assembler import STRUCTURED_TESTS
 
     np_exec = NumPyExecutor()
@@ -344,7 +360,7 @@ def test_regression():
         for label, exc in [("numpy", np_exec), ("torch", pt_exec)]:
             trace = exc.execute(prog)
             top = trace.steps[-1].top if trace.steps else None
-            ok = (top == expected)
+            ok = top == expected
             passed += ok
             total += 1
             if not ok:

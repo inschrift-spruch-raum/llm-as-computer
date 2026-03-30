@@ -22,8 +22,8 @@ uv sync
 这段程序把 3 和 5 压入栈, 相加, 然后停机。每一行都是一条指令, 每一条指令的获取都是一次注意力操作。
 
 ```python
-from isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from executor import NumPyExecutor
+from llm_as_computer.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from llm_as_computer.executor import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 3),

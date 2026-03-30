@@ -10,42 +10,49 @@ Compiled transformer executor — programs run inside a transformer's own infere
 
 ```
 ./
-├── isa.py              # 55 opcodes, TokenVocab, embeddings, CompiledAttentionHead
-├── executor.py         # NumPyExecutor, CompiledModel (PyTorch nn.Module), TorchExecutor
-├── programs.py         # Test programs + algorithm generators (fib, mul, gcd, etc.)
-├── assembler.py        # WASM-style structured control flow → flat ISA compiler
-├── wat_parser.py       # WebAssembly text format parser
-├── c_pipeline.py       # C → WAT → ISA compilation (requires clang + wasm2wat)
+├── src/
+│   ├── llm_as_computer/    # Python package (pip installable)
+│   │   ├── __init__.py
+│   │   ├── isa.py          # 55 opcodes, TokenVocab, embeddings, CompiledAttentionHead
+│   │   ├── executor.py     # NumPyExecutor, CompiledModel (PyTorch nn.Module), TorchExecutor
+│   │   ├── programs.py     # Test programs + algorithm generators (fib, mul, gcd, etc.)
+│   │   ├── assembler.py    # WASM-style structured control flow → flat ISA compiler
+│   │   ├── wat_parser.py   # WebAssembly text format parser
+│   │   └── c_pipeline.py   # C → WAT → ISA compilation (requires clang + wasm2wat)
+│   ├── executor.mojo       # Mojo backend
+│   ├── benchmarks.py       # Benchmark programs
+│   ├── benchmark.py        # Benchmark runner
+│   ├── llm_vs_native.py    # LLM vs native comparison
+│   └── run_mojo_tests.py   # Mojo test runner
 ├── test_consolidated.py    # Integration tests (NumPy/PyTorch equivalence)
 ├── test_wat_parser.py      # WAT parser test suite
-├── pyproject.toml      # uv project config (package = false, flat layout)
-├── uv.lock             # Reproducible dependency lockfile
-├── .python-version     # Python 3.14
+├── pyproject.toml          # uv project config (src/ layout, hatchling build)
+├── uv.lock                 # Reproducible dependency lockfile
+├── .python-version         # Python 3.14
 ├── dev/
-│   ├── phases/         # 20 phase exploration scripts (1–20) + result JSONs
-│   ├── FINDINGS.md     # Detailed per-phase findings
-│   └── RD-PLAN.md      # R&D plan with status
+│   ├── phases/             # 20 phase exploration scripts (1–20) + result JSONs
+│   ├── FINDINGS.md         # Detailed per-phase findings
+│   └── RD-PLAN.md          # R&D plan with status
 ├── docs/
-│   ├── architecture/   # overview.md, memory-model.md, compilation.md
-│   ├── isa/            # index.md, opcodes.md
-│   ├── guides/         # how-it-works.md, writing-programs.md
-│   ├── development/    # findings-summary.md, rd-plan-summary.md
-│   └── reference/      # api.md, file-map.md
-├── src/                # Mojo backend (executor.mojo + benchmarks)
-├── examples/           # Hungarian algorithm, Sudoku solver
-└── viz/                # React visualizations
+│   ├── architecture/       # overview.md, memory-model.md, compilation.md
+│   ├── isa/                # index.md, opcodes.md
+│   ├── guides/             # how-it-works.md, writing-programs.md
+│   ├── development/        # findings-summary.md, rd-plan-summary.md
+│   └── reference/          # api.md, file-map.md
+├── examples/               # Hungarian algorithm, Sudoku solver
+└── viz/                    # React visualizations
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add an opcode | `isa.py` (opcode defs + TokenVocab) + `executor.py` (dispatch) | Must update both NumPyExecutor AND CompiledModel |
-| Write a test program | `programs.py` | Follow `make_*` pattern, add to test runner |
-| Understand an embedding | `isa.py` → `embed_*` functions | Line 733+ |
-| Debug execution trace | `isa.py` → `compare_traces()` | Step-by-step diff |
-| Add structured control flow | `assembler.py` | WASM-style block/loop/if/br |
-| Parse WAT text | `wat_parser.py` | 712 lines, handles full WAT syntax |
+| Add an opcode | `src/llm_as_computer/isa.py` + `executor.py` | Must update both NumPyExecutor AND CompiledModel |
+| Write a test program | `src/llm_as_computer/programs.py` | Follow `make_*` pattern, add to test runner |
+| Understand an embedding | `src/llm_as_computer/isa.py` → `embed_*` functions | Line 733+ |
+| Debug execution trace | `src/llm_as_computer/isa.py` → `compare_traces()` | Step-by-step diff |
+| Add structured control flow | `src/llm_as_computer/assembler.py` | WASM-style block/loop/if/br |
+| Parse WAT text | `src/llm_as_computer/wat_parser.py` | Handles full WAT syntax |
 | Run benchmarks | `dev/benchmark_scaling.py` or `src/benchmarks.py` | Mojo vs Python |
 | Find phase findings | `dev/FINDINGS.md` | Comprehensive per-phase analysis |
 | Read documentation | `docs/` | Start with `docs/quickstart.md` or `docs/guides/how-it-works.md` |
@@ -63,7 +70,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 
 **Parabolic encoding:** `k = (2j, -j²)` encodes position j. Dot-product attention peaks sharply at target. Same encoding for all memory spaces. Float32 limit ~4K indices; float64 extends to 25M+.
 
-**Import chain:** `isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`. Flat imports, no packages, no `__init__.py`.
+**Import chain:** `isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`. Relative imports within the `llm_as_computer` package. External consumers use `from llm_as_computer.X import ...`.
 
 ## PHASES
 
@@ -102,7 +109,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 - **NEVER batch file changes** — Commit and push after EVERY write. Sessions die without warning.
 - **NEVER read large files blind** — Use `docs/reference/api.md` as function index, then targeted line-range reads. `executor.py` (~1070 lines) is the main trap.
 - **Do NOT pin exact dependency versions** — Research repo; use `>=` lower bounds.
-- **Do NOT add `__init__.py`** — Flat module structure by design. No packages.
+- **Do NOT use bare module imports** — Always `from llm_as_computer.X import ...`, never `from isa import ...`.
 
 ## CONVENTIONS
 
@@ -142,11 +149,11 @@ uv sync --locked
 
 ## NOTES
 
-- **Project configuration:** `package = false` in `[tool.uv]` — flat module structure, no build system, no `__init__.py`. uv manages dependencies only.
+- **Project configuration:** `package = true` in `[tool.uv]` with src/ layout. Build backend: hatchling. `uv sync` installs the package in editable mode.
 - **Lockfile:** `uv.lock` is committed for reproducible dependency resolution. Run `uv sync` to install from lockfile.
 - **File reading:** Start with `docs/reference/api.md` for function-level indexing, or `docs/reference/file-map.md` for file-level navigation. For files >500 lines, use index-then-target pattern.
-- **Environment:** `uv sync` at session start installs all dependencies. Mojo available via `/mnt/skills/user/llm-as-computer/`.
+- **Environment:** `uv sync` at session start installs all dependencies and the package. Mojo available via `/mnt/skills/user/llm-as-computer/`.
 - **Container limits:** ~200s bash timeout, ~15 min session, 8GB RAM. Desktop: longer sessions, 16GB RAM.
-- **Phase file imports:** Phase files import from each other using bare module names. `test_consolidated.py` imports `phase14_extended_isa` directly — changing phase14 breaks integration tests.
+- **Phase file imports:** Phase files 15-20 use `from llm_as_computer.X import ...` for core modules. Inter-phase imports (e.g., phase14 → phase4) use `sys.path.insert` for bare module names within `dev/phases/`. `test_consolidated.py` imports `phase14_extended_isa` via `sys.path` — changing phase14 breaks integration tests.
 - **C pipeline dependencies:** Requires `clang` with wasm32 target support + `wasm2wat`. Raises `EnvironmentError` if missing.
 - **Recall tags:** `recall("llm-as-computer", n=10)` or `recall("percepta", n=5)`.

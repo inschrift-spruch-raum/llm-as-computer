@@ -12,21 +12,44 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from isa import (
-    Instruction, Trace, TraceStep,
-    compare_traces, test_algorithm, test_trap_algorithm,
-    D_MODEL, N_OPCODES,
-    OP_PUSH, OP_POP, OP_ADD, OP_DUP, OP_HALT,
-    OP_SUB, OP_JZ, OP_JNZ, OP_NOP,
-    OP_SWAP, OP_OVER, OP_ROT,
-    OP_MUL, OP_LOCAL_GET, OP_LOCAL_SET, OP_LOCAL_TEE,
+from llm_as_computer.isa import (
+    Instruction,
+    Trace,
+    TraceStep,
+    compare_traces,
+    test_algorithm,
+    test_trap_algorithm,
+    D_MODEL,
+    N_OPCODES,
+    OP_PUSH,
+    OP_POP,
+    OP_ADD,
+    OP_DUP,
+    OP_HALT,
+    OP_SUB,
+    OP_JZ,
+    OP_JNZ,
+    OP_NOP,
+    OP_SWAP,
+    OP_OVER,
+    OP_ROT,
+    OP_MUL,
+    OP_LOCAL_GET,
+    OP_LOCAL_SET,
+    OP_LOCAL_TEE,
     OP_NAMES,
 )
-from executor import NumPyExecutor, CompiledModel, TorchExecutor
-from programs import ALL_TESTS, make_fibonacci, make_power_of_2, make_sum_1_to_n
+from llm_as_computer.executor import NumPyExecutor, CompiledModel, TorchExecutor
+from llm_as_computer.programs import (
+    ALL_TESTS,
+    make_fibonacci,
+    make_power_of_2,
+    make_sum_1_to_n,
+)
 
 
 # ─── Test Programs ──────────────────────────────────────────────
+
 
 def test_set_and_get():
     """PUSH 42 / LOCAL.SET 0 / LOCAL.GET 0 / HALT → 42"""
@@ -45,8 +68,8 @@ def test_swap_via_locals():
     → stack has [20, 10] (swapped), top = 10
     """
     prog = [
-        Instruction(OP_PUSH, 10),   # stack: [10]
-        Instruction(OP_PUSH, 20),   # stack: [10, 20]
+        Instruction(OP_PUSH, 10),  # stack: [10]
+        Instruction(OP_PUSH, 20),  # stack: [10, 20]
         Instruction(OP_LOCAL_SET, 0),  # pop 20 → local[0], stack: [10]
         Instruction(OP_LOCAL_SET, 1),  # pop 10 → local[1], stack: []
         Instruction(OP_LOCAL_GET, 0),  # push local[0]=20, stack: [20]
@@ -62,7 +85,7 @@ def test_tee():
         Instruction(OP_PUSH, 99),
         Instruction(OP_LOCAL_TEE, 0),  # copy 99 to local[0], stack still [99]
         Instruction(OP_LOCAL_GET, 0),  # push local[0]=99, stack: [99, 99]
-        Instruction(OP_ADD),           # 99 + 99 = 198
+        Instruction(OP_ADD),  # 99 + 99 = 198
         Instruction(OP_HALT),
     ]
     return prog, 198
@@ -85,11 +108,11 @@ def test_multiple_locals():
         # Now sum them: local[0] + local[1] + local[2] + local[3]
         Instruction(OP_LOCAL_GET, 0),  # push 10
         Instruction(OP_LOCAL_GET, 1),  # push 20
-        Instruction(OP_ADD),           # 30
+        Instruction(OP_ADD),  # 30
         Instruction(OP_LOCAL_GET, 2),  # push 30
-        Instruction(OP_ADD),           # 60
+        Instruction(OP_ADD),  # 60
         Instruction(OP_LOCAL_GET, 3),  # push 40
-        Instruction(OP_ADD),           # 100
+        Instruction(OP_ADD),  # 100
         Instruction(OP_HALT),
     ]
     return prog, 100
@@ -122,7 +145,7 @@ def test_tee_preserves_stack():
     prog = [
         Instruction(OP_PUSH, 77),
         Instruction(OP_LOCAL_TEE, 0),  # stack still [77]
-        Instruction(OP_HALT),          # top = 77
+        Instruction(OP_HALT),  # top = 77
     ]
     return prog, 77
 
@@ -131,12 +154,12 @@ def test_locals_with_stack_ops():
     """Mix locals and stack operations."""
     prog = [
         Instruction(OP_PUSH, 5),
-        Instruction(OP_DUP),            # stack: [5, 5]
-        Instruction(OP_LOCAL_SET, 0),    # pop 5 → local[0], stack: [5]
-        Instruction(OP_PUSH, 3),         # stack: [5, 3]
-        Instruction(OP_ADD),             # stack: [8]
-        Instruction(OP_LOCAL_GET, 0),    # push local[0]=5, stack: [8, 5]
-        Instruction(OP_ADD),             # stack: [13]
+        Instruction(OP_DUP),  # stack: [5, 5]
+        Instruction(OP_LOCAL_SET, 0),  # pop 5 → local[0], stack: [5]
+        Instruction(OP_PUSH, 3),  # stack: [5, 3]
+        Instruction(OP_ADD),  # stack: [8]
+        Instruction(OP_LOCAL_GET, 0),  # push local[0]=5, stack: [8, 5]
+        Instruction(OP_ADD),  # stack: [13]
         Instruction(OP_HALT),
     ]
     return prog, 13
@@ -149,22 +172,22 @@ def test_accumulator_loop():
     prog = [
         # Init: acc=0, counter=5
         Instruction(OP_PUSH, 0),
-        Instruction(OP_LOCAL_SET, 0),    # local[0] = 0 (acc)
+        Instruction(OP_LOCAL_SET, 0),  # local[0] = 0 (acc)
         Instruction(OP_PUSH, 5),
-        Instruction(OP_LOCAL_SET, 1),    # local[1] = 5 (counter)
+        Instruction(OP_LOCAL_SET, 1),  # local[1] = 5 (counter)
         # Loop body (ip=4):
-        Instruction(OP_LOCAL_GET, 0),    # push acc
-        Instruction(OP_LOCAL_GET, 1),    # push counter
-        Instruction(OP_ADD),             # acc + counter
-        Instruction(OP_LOCAL_SET, 0),    # store new acc
+        Instruction(OP_LOCAL_GET, 0),  # push acc
+        Instruction(OP_LOCAL_GET, 1),  # push counter
+        Instruction(OP_ADD),  # acc + counter
+        Instruction(OP_LOCAL_SET, 0),  # store new acc
         # Decrement counter
-        Instruction(OP_LOCAL_GET, 1),    # push counter
+        Instruction(OP_LOCAL_GET, 1),  # push counter
         Instruction(OP_PUSH, 1),
-        Instruction(OP_SUB),             # counter - 1
-        Instruction(OP_LOCAL_TEE, 1),    # store and keep on stack
-        Instruction(OP_JNZ, 4),          # loop if counter != 0
+        Instruction(OP_SUB),  # counter - 1
+        Instruction(OP_LOCAL_TEE, 1),  # store and keep on stack
+        Instruction(OP_JNZ, 4),  # loop if counter != 0
         # Done: push result
-        Instruction(OP_LOCAL_GET, 0),    # push acc
+        Instruction(OP_LOCAL_GET, 0),  # push acc
         Instruction(OP_HALT),
     ]
     return prog, 15
@@ -173,19 +196,20 @@ def test_accumulator_loop():
 # ─── All Phase 15 Tests ──────────────────────────────────────────
 
 PHASE15_TESTS = [
-    ("set_and_get",         test_set_and_get),
-    ("swap_via_locals",     test_swap_via_locals),
-    ("tee",                 test_tee),
-    ("multiple_locals",     test_multiple_locals),
-    ("overwrite",           test_overwrite),
-    ("unset_local",         test_unset_local),
+    ("set_and_get", test_set_and_get),
+    ("swap_via_locals", test_swap_via_locals),
+    ("tee", test_tee),
+    ("multiple_locals", test_multiple_locals),
+    ("overwrite", test_overwrite),
+    ("unset_local", test_unset_local),
     ("tee_preserves_stack", test_tee_preserves_stack),
-    ("locals_with_stack",   test_locals_with_stack_ops),
-    ("accumulator_loop",    test_accumulator_loop),
+    ("locals_with_stack", test_locals_with_stack_ops),
+    ("accumulator_loop", test_accumulator_loop),
 ]
 
 
 # ─── Test Runners ────────────────────────────────────────────────
+
 
 def test_local_variables():
     """Test all LOCAL.GET/SET/TEE programs on both executors."""
@@ -232,18 +256,40 @@ def test_regression():
 
     # Phase 11 extended tests
     ext_tests = [
-        ("sub_basic",
-         [Instruction(OP_PUSH, 10), Instruction(OP_PUSH, 3),
-          Instruction(OP_SUB), Instruction(OP_HALT)], 7),
-        ("loop_countdown",
-         [Instruction(OP_PUSH, 3), Instruction(OP_DUP),
-          Instruction(OP_PUSH, 1), Instruction(OP_SUB),
-          Instruction(OP_DUP), Instruction(OP_JNZ, 1),
-          Instruction(OP_HALT)], 0),
-        ("jz_taken",
-         [Instruction(OP_PUSH, 0), Instruction(OP_JZ, 3),
-          Instruction(OP_HALT),
-          Instruction(OP_PUSH, 42), Instruction(OP_HALT)], 42),
+        (
+            "sub_basic",
+            [
+                Instruction(OP_PUSH, 10),
+                Instruction(OP_PUSH, 3),
+                Instruction(OP_SUB),
+                Instruction(OP_HALT),
+            ],
+            7,
+        ),
+        (
+            "loop_countdown",
+            [
+                Instruction(OP_PUSH, 3),
+                Instruction(OP_DUP),
+                Instruction(OP_PUSH, 1),
+                Instruction(OP_SUB),
+                Instruction(OP_DUP),
+                Instruction(OP_JNZ, 1),
+                Instruction(OP_HALT),
+            ],
+            0,
+        ),
+        (
+            "jz_taken",
+            [
+                Instruction(OP_PUSH, 0),
+                Instruction(OP_JZ, 3),
+                Instruction(OP_HALT),
+                Instruction(OP_PUSH, 42),
+                Instruction(OP_HALT),
+            ],
+            42,
+        ),
     ]
     for name, prog, expected in ext_tests:
         ok, _ = test_algorithm(name, prog, expected, np_exec, pt_exec)
@@ -284,7 +330,7 @@ def test_model_summary():
         ("Head 6: local addr", model.head_local_addr),
     ]
     # Include heap heads if they exist (Phase 16+)
-    if hasattr(model, 'head_heap_val'):
+    if hasattr(model, "head_heap_val"):
         heads.append(("Head 7: heap value", model.head_heap_val))
         heads.append(("Head 8: heap addr", model.head_heap_addr))
 
@@ -323,12 +369,16 @@ def test_model_summary():
     # Verify sp_deltas size
     ok = model.sp_deltas.shape[0] == N_OPCODES
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  sp_deltas size = {model.sp_deltas.shape[0]} (expected {N_OPCODES})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  sp_deltas size = {model.sp_deltas.shape[0]} (expected {N_OPCODES})"
+    )
 
     # Verify M_top rows match N_OPCODES
     ok = model.M_top.shape[0] == N_OPCODES
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  M_top rows = {model.M_top.shape[0]} (expected {N_OPCODES})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  M_top rows = {model.M_top.shape[0]} (expected {N_OPCODES})"
+    )
 
     return all(checks)
 
@@ -351,7 +401,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 0 and pt_top == 0
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  Unset local returns 0 (np={np_top}, pt={pt_top})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  Unset local returns 0 (np={np_top}, pt={pt_top})"
+    )
 
     # 2. LOCAL.SET + LOCAL.GET roundtrip
     prog = [
@@ -373,7 +425,7 @@ def test_invariants():
         Instruction(OP_PUSH, 55),
         Instruction(OP_LOCAL_TEE, 0),
         Instruction(OP_LOCAL_GET, 0),  # should be 55
-        Instruction(OP_ADD),           # 55 + 55 = 110
+        Instruction(OP_ADD),  # 55 + 55 = 110
         Instruction(OP_HALT),
     ]
     np_trace = np_exec.execute(prog)
@@ -382,7 +434,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 110 and pt_top == 110
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  TEE preserves stack + stores (np={np_top}, pt={pt_top})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  TEE preserves stack + stores (np={np_top}, pt={pt_top})"
+    )
 
     # 4. Overwrite returns new value
     prog = [
@@ -399,7 +453,9 @@ def test_invariants():
     pt_top = pt_trace.steps[-1].top
     ok = np_top == 999 and pt_top == 999
     checks.append(ok)
-    print(f"  {'PASS' if ok else 'FAIL'}  Overwrite returns new value (np={np_top}, pt={pt_top})")
+    print(
+        f"  {'PASS' if ok else 'FAIL'}  Overwrite returns new value (np={np_top}, pt={pt_top})"
+    )
 
     # 5. NumPy and PyTorch produce identical traces for all phase 15 test programs
     trace_match_ok = True
@@ -412,7 +468,9 @@ def test_invariants():
             print(f"  FAIL  Trace mismatch for {name}: {detail}")
             trace_match_ok = False
     checks.append(trace_match_ok)
-    print(f"  {'PASS' if trace_match_ok else 'FAIL'}  All traces match (numpy vs pytorch)")
+    print(
+        f"  {'PASS' if trace_match_ok else 'FAIL'}  All traces match (numpy vs pytorch)"
+    )
 
     print(f"\n  Invariants: {sum(checks)}/{len(checks)} passed")
     return all(checks)

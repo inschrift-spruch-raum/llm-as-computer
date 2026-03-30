@@ -29,12 +29,13 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from isa import Instruction, OP_PUSH, OP_JNZ, OP_EQ, compare_traces
-from executor import NumPyExecutor, TorchExecutor
-from assembler import compile_structured
+from llm_as_computer.isa import Instruction, OP_PUSH, OP_JNZ, OP_EQ, compare_traces
+from llm_as_computer.executor import NumPyExecutor, TorchExecutor
+from llm_as_computer.assembler import compile_structured
 
 
 # ─── Program builders ────────────────────────────────────────────────────────
+
 
 def prog_block_early_exit():
     """BLOCK with a BR_IF that always exits; PUSH 99 is unreachable.
@@ -42,15 +43,17 @@ def prog_block_early_exit():
     PUSH 5 ; BLOCK ; PUSH 1 ; BR_IF 0 ; PUSH 99 (dead) ; END ; HALT
     Expected top: 5
     """
-    prog = compile_structured([
-        ('PUSH', 5),
-        ('BLOCK',),
-          ('PUSH', 1),       # non-zero condition → always branch
-          ('BR_IF', 0),      # exit BLOCK
-          ('PUSH', 99),      # unreachable
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 5),
+            ("BLOCK",),
+            ("PUSH", 1),  # non-zero condition → always branch
+            ("BR_IF", 0),  # exit BLOCK
+            ("PUSH", 99),  # unreachable
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 5
 
 
@@ -59,20 +62,22 @@ def prog_loop_countdown():
 
     Expected top: 0  (counter reaches 0 and exits)
     """
-    prog = compile_structured([
-        ('PUSH', 3),           # counter
-        ('BLOCK',),            # outer block: exit when counter == 0
-          ('LOOP',),
-            ('DUP',),
-            ('EQZ',),          # is counter 0?
-            ('BR_IF', 1),      # exit BLOCK (depth 1) if so
-            ('PUSH', 1),
-            ('SUB',),          # counter -= 1
-            ('BR', 0),         # continue LOOP (depth 0)
-          ('END',),
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 3),  # counter
+            ("BLOCK",),  # outer block: exit when counter == 0
+            ("LOOP",),
+            ("DUP",),
+            ("EQZ",),  # is counter 0?
+            ("BR_IF", 1),  # exit BLOCK (depth 1) if so
+            ("PUSH", 1),
+            ("SUB",),  # counter -= 1
+            ("BR", 0),  # continue LOOP (depth 0)
+            ("END",),
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 0
 
 
@@ -82,15 +87,17 @@ def prog_if_no_else_taken():
     PUSH 7; PUSH 3; GT_S → 1; IF; PUSH 100; END; HALT
     Expected top: 100
     """
-    prog = compile_structured([
-        ('PUSH', 7),
-        ('PUSH', 3),
-        ('GT_S',),    # 7 > 3 = 1 (true)
-        ('IF',),
-          ('PUSH', 100),
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 7),
+            ("PUSH", 3),
+            ("GT_S",),  # 7 > 3 = 1 (true)
+            ("IF",),
+            ("PUSH", 100),
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 100
 
 
@@ -100,16 +107,18 @@ def prog_if_no_else_skipped():
     Sentinel 99 remains on stack.
     Expected top: 99
     """
-    prog = compile_structured([
-        ('PUSH', 99),          # sentinel below condition result
-        ('PUSH', 3),
-        ('PUSH', 7),
-        ('GT_S',),    # 3 > 7 = 0 (false)
-        ('IF',),
-          ('PUSH', 100),       # skipped
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 99),  # sentinel below condition result
+            ("PUSH", 3),
+            ("PUSH", 7),
+            ("GT_S",),  # 3 > 7 = 0 (false)
+            ("IF",),
+            ("PUSH", 100),  # skipped
+            ("END",),
+            ("HALT",),
+        ]
+    )
     # GT_S pops 3 and 7, pushes 0; IF pops 0 (false) → skip body
     # Stack: [99].  top = 99
     return prog, 99
@@ -120,17 +129,19 @@ def prog_if_else_true():
 
     Expected top: 100
     """
-    prog = compile_structured([
-        ('PUSH', 7),
-        ('PUSH', 3),
-        ('GT_S',),   # 1
-        ('IF',),
-          ('PUSH', 100),
-        ('ELSE',),
-          ('PUSH', 200),
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 7),
+            ("PUSH", 3),
+            ("GT_S",),  # 1
+            ("IF",),
+            ("PUSH", 100),
+            ("ELSE",),
+            ("PUSH", 200),
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 100
 
 
@@ -139,17 +150,19 @@ def prog_if_else_false():
 
     Expected top: 200
     """
-    prog = compile_structured([
-        ('PUSH', 3),
-        ('PUSH', 7),
-        ('GT_S',),   # 0
-        ('IF',),
-          ('PUSH', 100),
-        ('ELSE',),
-          ('PUSH', 200),
-        ('END',),
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 3),
+            ("PUSH", 7),
+            ("GT_S",),  # 0
+            ("IF",),
+            ("PUSH", 100),
+            ("ELSE",),
+            ("PUSH", 200),
+            ("END",),
+            ("HALT",),
+        ]
+    )
     return prog, 200
 
 
@@ -174,25 +187,27 @@ def prog_br_table_switch():
     Invariant check: for N=3, the comparison chain has 4 JNZ/jump instructions.
     Expected top: 20
     """
-    prog = compile_structured([
-        ('PUSH', 1),           # index = 1
-        ('BLOCK',),            # done  (depth 3 from BR_TABLE)
-          ('BLOCK',),          # case2 (depth 2)
-            ('BLOCK',),        # case1 (depth 1)
-              ('BLOCK',),      # case0 (depth 0)
-                ('BR_TABLE', [0, 1, 2], 3),
-              ('END',),        # case0 end → case0 body follows
-              ('PUSH', 10),
-              ('BR', 2),       # exit done BLOCK
-            ('END',),          # case1 end → case1 body follows
-            ('PUSH', 20),
-            ('BR', 1),         # exit done BLOCK
-          ('END',),            # case2 end → case2 body follows
-          ('PUSH', 30),
-          ('BR', 0),           # exit done BLOCK
-        ('END',),              # done BLOCK end
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 1),  # index = 1
+            ("BLOCK",),  # done  (depth 3 from BR_TABLE)
+            ("BLOCK",),  # case2 (depth 2)
+            ("BLOCK",),  # case1 (depth 1)
+            ("BLOCK",),  # case0 (depth 0)
+            ("BR_TABLE", [0, 1, 2], 3),
+            ("END",),  # case0 end → case0 body follows
+            ("PUSH", 10),
+            ("BR", 2),  # exit done BLOCK
+            ("END",),  # case1 end → case1 body follows
+            ("PUSH", 20),
+            ("BR", 1),  # exit done BLOCK
+            ("END",),  # case2 end → case2 body follows
+            ("PUSH", 30),
+            ("BR", 0),  # exit done BLOCK
+            ("END",),  # done BLOCK end
+            ("HALT",),
+        ]
+    )
     return prog, 20
 
 
@@ -202,26 +217,28 @@ def prog_br_table_default():
     Same 3-case structure as prog_br_table_switch; index=5.
     Expected top: 99
     """
-    prog = compile_structured([
-        ('PUSH', 5),           # index = 5 (out of range for cases [0,1,2])
-        ('BLOCK',),            # done
-          ('BLOCK',),          # case2
-            ('BLOCK',),        # case1
-              ('BLOCK',),      # case0
-                ('BR_TABLE', [0, 1, 2], 3),
-              ('END',),
-              ('PUSH', 10),
-              ('BR', 2),
-            ('END',),
-            ('PUSH', 20),
-            ('BR', 1),
-          ('END',),
-          ('PUSH', 30),
-          ('BR', 0),
-        ('END',),              # done end
-        ('PUSH', 99),          # default falls through to here
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 5),  # index = 5 (out of range for cases [0,1,2])
+            ("BLOCK",),  # done
+            ("BLOCK",),  # case2
+            ("BLOCK",),  # case1
+            ("BLOCK",),  # case0
+            ("BR_TABLE", [0, 1, 2], 3),
+            ("END",),
+            ("PUSH", 10),
+            ("BR", 2),
+            ("END",),
+            ("PUSH", 20),
+            ("BR", 1),
+            ("END",),
+            ("PUSH", 30),
+            ("BR", 0),
+            ("END",),  # done end
+            ("PUSH", 99),  # default falls through to here
+            ("HALT",),
+        ]
+    )
     # With default=depth3=done BLOCK: default jump goes to done-END,
     # then PUSH 99 executes.  top = 99
     return prog, 99
@@ -235,35 +252,32 @@ def prog_factorial():
     Exits when n == 0.
     Expected top: 120
     """
-    prog = compile_structured([
-        ('PUSH', 5),
-        ('LOCAL.SET', 0),      # n = 5
-        ('PUSH', 1),
-        ('LOCAL.SET', 1),      # result = 1
-
-        ('BLOCK',),
-          ('LOOP',),
-            ('LOCAL.GET', 0),  # n
-            ('EQZ',),
-            ('BR_IF', 1),      # exit BLOCK if n == 0
-
-            ('LOCAL.GET', 0),  # n
-            ('LOCAL.GET', 1),  # result
-            ('MUL',),          # n * result
-            ('LOCAL.SET', 1),  # result = n * result
-
-            ('LOCAL.GET', 0),  # n
-            ('PUSH', 1),
-            ('SUB',),          # n - 1
-            ('LOCAL.SET', 0),  # n -= 1
-
-            ('BR', 0),         # continue LOOP
-          ('END',),
-        ('END',),
-
-        ('LOCAL.GET', 1),      # push result
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 5),
+            ("LOCAL.SET", 0),  # n = 5
+            ("PUSH", 1),
+            ("LOCAL.SET", 1),  # result = 1
+            ("BLOCK",),
+            ("LOOP",),
+            ("LOCAL.GET", 0),  # n
+            ("EQZ",),
+            ("BR_IF", 1),  # exit BLOCK if n == 0
+            ("LOCAL.GET", 0),  # n
+            ("LOCAL.GET", 1),  # result
+            ("MUL",),  # n * result
+            ("LOCAL.SET", 1),  # result = n * result
+            ("LOCAL.GET", 0),  # n
+            ("PUSH", 1),
+            ("SUB",),  # n - 1
+            ("LOCAL.SET", 0),  # n -= 1
+            ("BR", 0),  # continue LOOP
+            ("END",),
+            ("END",),
+            ("LOCAL.GET", 1),  # push result
+            ("HALT",),
+        ]
+    )
     return prog, 120
 
 
@@ -275,56 +289,53 @@ def prog_gcd():
     Exits when b == 0.  Returns a.
     Expected top: 6
     """
-    prog = compile_structured([
-        ('PUSH', 48),
-        ('LOCAL.SET', 0),      # a = 48
-        ('PUSH', 18),
-        ('LOCAL.SET', 1),      # b = 18
-
-        ('BLOCK',),
-          ('LOOP',),
-            ('LOCAL.GET', 1),  # b
-            ('EQZ',),
-            ('BR_IF', 1),      # exit BLOCK if b == 0
-
-            ('LOCAL.GET', 0),  # a
-            ('LOCAL.GET', 1),  # b
-            ('REM_U',),        # a % b
-            ('LOCAL.SET', 2),  # temp = a % b
-
-            ('LOCAL.GET', 1),
-            ('LOCAL.SET', 0),  # a = b
-
-            ('LOCAL.GET', 2),
-            ('LOCAL.SET', 1),  # b = temp
-
-            ('BR', 0),         # continue LOOP
-          ('END',),
-        ('END',),
-
-        ('LOCAL.GET', 0),      # return a (GCD)
-        ('HALT',),
-    ])
+    prog = compile_structured(
+        [
+            ("PUSH", 48),
+            ("LOCAL.SET", 0),  # a = 48
+            ("PUSH", 18),
+            ("LOCAL.SET", 1),  # b = 18
+            ("BLOCK",),
+            ("LOOP",),
+            ("LOCAL.GET", 1),  # b
+            ("EQZ",),
+            ("BR_IF", 1),  # exit BLOCK if b == 0
+            ("LOCAL.GET", 0),  # a
+            ("LOCAL.GET", 1),  # b
+            ("REM_U",),  # a % b
+            ("LOCAL.SET", 2),  # temp = a % b
+            ("LOCAL.GET", 1),
+            ("LOCAL.SET", 0),  # a = b
+            ("LOCAL.GET", 2),
+            ("LOCAL.SET", 1),  # b = temp
+            ("BR", 0),  # continue LOOP
+            ("END",),
+            ("END",),
+            ("LOCAL.GET", 0),  # return a (GCD)
+            ("HALT",),
+        ]
+    )
     return prog, 6
 
 
 # ─── All structured test cases ────────────────────────────────────────────────
 
 STRUCTURED_TESTS = [
-    ("block_early_exit",       prog_block_early_exit),
-    ("loop_countdown",         prog_loop_countdown),
-    ("if_no_else_taken",       prog_if_no_else_taken),
-    ("if_no_else_skipped",     prog_if_no_else_skipped),
-    ("if_else_true",           prog_if_else_true),
-    ("if_else_false",          prog_if_else_false),
-    ("br_table_switch_case1",  prog_br_table_switch),
-    ("br_table_default",       prog_br_table_default),
-    ("factorial_5",            prog_factorial),
-    ("gcd_48_18",              prog_gcd),
+    ("block_early_exit", prog_block_early_exit),
+    ("loop_countdown", prog_loop_countdown),
+    ("if_no_else_taken", prog_if_no_else_taken),
+    ("if_no_else_skipped", prog_if_no_else_skipped),
+    ("if_else_true", prog_if_else_true),
+    ("if_else_false", prog_if_else_false),
+    ("br_table_switch_case1", prog_br_table_switch),
+    ("br_table_default", prog_br_table_default),
+    ("factorial_5", prog_factorial),
+    ("gcd_48_18", prog_gcd),
 ]
 
 
 # ─── Test runners ─────────────────────────────────────────────────────────────
+
 
 def test_structured_programs(verbose=False):
     """Run all structured programs on both executors; check expected top."""
@@ -344,10 +355,12 @@ def test_structured_programs(verbose=False):
         for label, exc in [("numpy", np_exec), ("torch", pt_exec)]:
             trace = exc.execute(prog)
             top = trace.steps[-1].top if trace.steps else None
-            ok = (top == expected)
+            ok = top == expected
             passed += ok
             status = "PASS" if ok else "FAIL"
-            print(f"  {status}  {label:5s}  {name:<32s}  expected={expected:>5}  got={top}")
+            print(
+                f"  {status}  {label:5s}  {name:<32s}  expected={expected:>5}  got={top}"
+            )
 
         if verbose:
             print(f"    flat length: {len(prog)} instructions")
@@ -395,13 +408,13 @@ def test_br_table_invariant():
     for n_cases in range(1, 6):
         # Build a minimal BR_TABLE program with n_cases cases.
         # Wrap in BLOCK so there's a valid target at depth n_cases.
-        wasm = [('PUSH', 0)]  # index = 0 (doesn't matter for counting)
+        wasm = [("PUSH", 0)]  # index = 0 (doesn't matter for counting)
         for _ in range(n_cases + 1):
-            wasm.append(('BLOCK',))
-        wasm.append(('BR_TABLE', list(range(n_cases)), n_cases))
+            wasm.append(("BLOCK",))
+        wasm.append(("BR_TABLE", list(range(n_cases)), n_cases))
         for _ in range(n_cases + 1):
-            wasm.append(('END',))
-        wasm.append(('HALT',))
+            wasm.append(("END",))
+        wasm.append(("HALT",))
 
         prog = compile_structured(wasm)
 
@@ -426,14 +439,14 @@ def test_br_table_invariant():
         # Plus 1 for the default jump (a PUSH 1 + JNZ block).
         # Count PUSH-1; JNZ pairs to find default + handler jumps.
         push1_jnz_pairs = sum(
-            1 for j in range(len(prog) - 1)
-            if prog[j].op == OP_PUSH and prog[j].arg == 1
-            and prog[j + 1].op == OP_JNZ
+            1
+            for j in range(len(prog) - 1)
+            if prog[j].op == OP_PUSH and prog[j].arg == 1 and prog[j + 1].op == OP_JNZ
         )
         # push1_jnz_pairs = 1 (default) + n_cases (handlers)
         chain_jumps = eq_jnz_pairs + 1  # comparisons + default
         expected_chain = n_cases + 1
-        ok = (chain_jumps == expected_chain)
+        ok = chain_jumps == expected_chain
         passed = passed and ok
         status = "PASS" if ok else "FAIL"
         print(
@@ -455,14 +468,10 @@ def test_output_types():
     passed = True
     for name, builder in STRUCTURED_TESTS:
         prog, _ = builder()
-        ok = (
-            isinstance(prog, list)
-            and all(isinstance(i, Instruction) for i in prog)
-        )
+        ok = isinstance(prog, list) and all(isinstance(i, Instruction) for i in prog)
         passed = passed and ok
         status = "PASS" if ok else "FAIL"
-        print(f"  {status}  {name}  ({len(prog)} instructions, "
-              f"all Instruction: {ok})")
+        print(f"  {status}  {name}  ({len(prog)} instructions, all Instruction: {ok})")
 
     print()
     return passed
@@ -474,7 +483,8 @@ def test_regression():
     print("Phase 19: Regression — test_consolidated ALL_TESTS")
     print("=" * 60)
 
-    from programs import ALL_TESTS
+    from llm_as_computer.programs import ALL_TESTS
+
     np_exec = NumPyExecutor()
     pt_exec = TorchExecutor()
 
@@ -487,7 +497,7 @@ def test_regression():
         for label, exc in [("numpy", np_exec), ("torch", pt_exec)]:
             trace = exc.execute(prog)
             top = trace.steps[-1].top if trace.steps else None
-            ok = (top == expected)
+            ok = top == expected
             passed += ok
             if not ok:
                 failures.append((label, name, expected, top))

@@ -24,30 +24,31 @@ import subprocess
 import tempfile
 from typing import List, Optional
 
-from isa import Instruction
-from wat_parser import parse_wat
+from .isa import Instruction
+from .wat_parser import parse_wat
 
 
 # ─── Unsupported WASM features ────────────────────────────────────
 
 _UNSUPPORTED_PATTERNS = [
     # 64-bit integer ops
-    (r'\bi64\.\w+', 'i64 (64-bit integer) operations'),
+    (r"\bi64\.\w+", "i64 (64-bit integer) operations"),
     # Floating point
-    (r'\bf32\.\w+', 'f32 (32-bit float) operations'),
-    (r'\bf64\.\w+', 'f64 (64-bit float) operations'),
+    (r"\bf32\.\w+", "f32 (32-bit float) operations"),
+    (r"\bf64\.\w+", "f64 (64-bit float) operations"),
     # SIMD
-    (r'\bv128\.\w+', 'v128 (SIMD) operations'),
+    (r"\bv128\.\w+", "v128 (SIMD) operations"),
     # Reference types
-    (r'\b(ref\.null|ref\.is_null|ref\.func)\b', 'reference type operations'),
+    (r"\b(ref\.null|ref\.is_null|ref\.func)\b", "reference type operations"),
     # Atomic operations
-    (r'\b(memory\.atomic|i32\.atomic|i64\.atomic)\.\w+', 'atomic operations'),
+    (r"\b(memory\.atomic|i32\.atomic|i64\.atomic)\.\w+", "atomic operations"),
     # Bulk memory
-    (r'\b(memory\.copy|memory\.fill|memory\.init|data\.drop)\b',
-     'bulk memory operations'),
+    (
+        r"\b(memory\.copy|memory\.fill|memory\.init|data\.drop)\b",
+        "bulk memory operations",
+    ),
     # Table operations
-    (r'\b(table\.get|table\.set|table\.grow|table\.size)\b',
-     'table operations'),
+    (r"\b(table\.get|table\.set|table\.grow|table\.size)\b", "table operations"),
 ]
 
 
@@ -58,15 +59,15 @@ def _check_toolchain() -> dict:
         dict with 'clang' and 'wasm2wat' keys, values are paths or None.
     """
     return {
-        'clang': shutil.which('clang'),
-        'wasm2wat': shutil.which('wasm2wat'),
+        "clang": shutil.which("clang"),
+        "wasm2wat": shutil.which("wasm2wat"),
     }
 
 
 def _has_toolchain() -> bool:
     """Return True if both clang and wasm2wat are available."""
     tools = _check_toolchain()
-    return tools['clang'] is not None and tools['wasm2wat'] is not None
+    return tools["clang"] is not None and tools["wasm2wat"] is not None
 
 
 def _check_unsupported_features(wat_text: str) -> List[str]:
@@ -81,9 +82,9 @@ def _check_unsupported_features(wat_text: str) -> List[str]:
         if matches:
             # Deduplicate
             unique = sorted(set(matches))
-            examples = ', '.join(unique[:3])
+            examples = ", ".join(unique[:3])
             if len(unique) > 3:
-                examples += f' (and {len(unique) - 3} more)'
+                examples += f" (and {len(unique) - 3} more)"
             errors.append(f"Unsupported: {desc} — found: {examples}")
     return errors
 
@@ -105,19 +106,19 @@ def _extract_function_wat(wat_text: str, func_name: str) -> str:
     Raises:
         ValueError: If the function is not found.
     """
-    if not func_name.startswith('$'):
-        func_name = '$' + func_name
+    if not func_name.startswith("$"):
+        func_name = "$" + func_name
 
     # Find the function start
     # Pattern: (func $name (type ...) ...
     pattern = re.compile(
-        r'\(func\s+' + re.escape(func_name) + r'\b',
+        r"\(func\s+" + re.escape(func_name) + r"\b",
         re.MULTILINE,
     )
     match = pattern.search(wat_text)
     if not match:
         # List available functions for better error message
-        available = re.findall(r'\(func\s+(\$\w+)', wat_text)
+        available = re.findall(r"\(func\s+(\$\w+)", wat_text)
         raise ValueError(
             f"Function {func_name} not found in WAT module. "
             f"Available functions: {available}"
@@ -128,12 +129,12 @@ def _extract_function_wat(wat_text: str, func_name: str) -> str:
     depth = 0
     i = start
     while i < len(wat_text):
-        if wat_text[i] == '(':
+        if wat_text[i] == "(":
             depth += 1
-        elif wat_text[i] == ')':
+        elif wat_text[i] == ")":
             depth -= 1
             if depth == 0:
-                return wat_text[start:i + 1]
+                return wat_text[start : i + 1]
         i += 1
 
     raise ValueError(f"Unmatched parentheses for function {func_name}")
@@ -147,9 +148,9 @@ def _count_params(func_wat: str) -> int:
         (param i32) (param i32) — one param per group
     """
     count = 0
-    for m in re.finditer(r'\(param\s+([^)]+)\)', func_wat):
+    for m in re.finditer(r"\(param\s+([^)]+)\)", func_wat):
         types = m.group(1).split()
-        count += sum(1 for t in types if t == 'i32')
+        count += sum(1 for t in types if t == "i32")
     return count
 
 
@@ -159,16 +160,16 @@ def _count_locals(func_wat: str) -> int:
     These are (local ...) declarations beyond the params.
     """
     count = 0
-    for m in re.finditer(r'\(local\s+([^)]+)\)', func_wat):
+    for m in re.finditer(r"\(local\s+([^)]+)\)", func_wat):
         types = m.group(1).split()
-        count += sum(1 for t in types if t == 'i32')
+        count += sum(1 for t in types if t == "i32")
     return count
 
 
 def compile_c_to_wat(
     source: str,
     *,
-    opt_level: str = '-O1',
+    opt_level: str = "-O1",
     extra_clang_args: Optional[List[str]] = None,
 ) -> str:
     """Compile C source to WAT text.
@@ -189,38 +190,39 @@ def compile_c_to_wat(
         EnvironmentError: If required tools are not installed.
     """
     tools = _check_toolchain()
-    if not tools['clang']:
+    if not tools["clang"]:
         raise EnvironmentError(
             "clang not found. Install with: apt install clang lld\n"
             "clang must support --target=wasm32-unknown-unknown"
         )
-    if not tools['wasm2wat']:
+    if not tools["wasm2wat"]:
         raise EnvironmentError(
             "wasm2wat not found. Install with: apt install wabt\n"
             "Or download from https://github.com/WebAssembly/wabt/releases"
         )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        c_path = os.path.join(tmpdir, 'input.c')
-        wasm_path = os.path.join(tmpdir, 'output.wasm')
+        c_path = os.path.join(tmpdir, "input.c")
+        wasm_path = os.path.join(tmpdir, "output.wasm")
 
-        with open(c_path, 'w') as f:
+        with open(c_path, "w") as f:
             f.write(source)
 
         # C → WASM via clang
         clang_cmd = [
-            tools['clang'],
-            '--target=wasm32-unknown-unknown',
-            '-nostdlib',
-            '-Wl,--no-entry',
-            '-Wl,--export-all',
+            tools["clang"],
+            "--target=wasm32-unknown-unknown",
+            "-nostdlib",
+            "-Wl,--no-entry",
+            "-Wl,--export-all",
             opt_level,
-            '-o', wasm_path,
+            "-o",
+            wasm_path,
             c_path,
         ]
         if extra_clang_args:
             # Insert before -o
-            idx = clang_cmd.index('-o')
+            idx = clang_cmd.index("-o")
             for arg in reversed(extra_clang_args):
                 clang_cmd.insert(idx, arg)
 
@@ -231,21 +233,17 @@ def compile_c_to_wat(
             timeout=30,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"clang compilation failed:\n{result.stderr}"
-            )
+            raise RuntimeError(f"clang compilation failed:\n{result.stderr}")
 
         # WASM → WAT via wasm2wat
         result = subprocess.run(
-            [tools['wasm2wat'], wasm_path],
+            [tools["wasm2wat"], wasm_path],
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"wasm2wat conversion failed:\n{result.stderr}"
-            )
+            raise RuntimeError(f"wasm2wat conversion failed:\n{result.stderr}")
 
         return result.stdout
 
@@ -254,7 +252,7 @@ def compile_c(
     source: str,
     *,
     func_name: Optional[str] = None,
-    opt_level: str = '-O1',
+    opt_level: str = "-O1",
     extra_clang_args: Optional[List[str]] = None,
     strict: bool = True,
 ) -> List[Instruction]:
@@ -328,14 +326,15 @@ def compile_c(
     # to pop arguments from the stack into locals in reverse order
     # (stack is LIFO: last arg is on top).
     if n_params > 0:
-        from isa import program as make_prog
+        from .isa import program as make_prog
+
         # Initialize any extra locals to 0 (WASM semantics: locals default to 0)
         init_instrs = []
         for i in range(n_locals):
-            init_instrs.extend([('PUSH', 0), ('LOCAL.SET', n_params + i)])
+            init_instrs.extend([("PUSH", 0), ("LOCAL.SET", n_params + i)])
         # Pop args from stack into locals (reverse order: top of stack = last param)
         for i in range(n_params - 1, -1, -1):
-            init_instrs.append(('LOCAL.SET', i))
+            init_instrs.append(("LOCAL.SET", i))
         setup = make_prog(*init_instrs)
         # Fix: offset all jump targets in prog by len(setup)
         prog = _offset_jumps(setup, prog)
@@ -343,13 +342,16 @@ def compile_c(
     return prog
 
 
-def _offset_jumps(prefix: List[Instruction], body: List[Instruction]) -> List[Instruction]:
+def _offset_jumps(
+    prefix: List[Instruction], body: List[Instruction]
+) -> List[Instruction]:
     """Prepend prefix instructions to body, offsetting all jump targets in body.
 
     Jump instructions (JZ, JNZ) in body have absolute addresses that
     need to be shifted by len(prefix).
     """
-    from isa import OP_JZ, OP_JNZ
+    from .isa import OP_JZ, OP_JNZ
+
     offset = len(prefix)
     adjusted = []
     for instr in body:
@@ -373,10 +375,17 @@ def _auto_detect_function(wat_text: str) -> str:
 
     # Filter out compiler boilerplate
     _BOILERPLATE = {
-        '__wasm_call_ctors', 'memory',
-        '__dso_handle', '__data_end', '__stack_low', '__stack_high',
-        '__global_base', '__heap_base', '__heap_end',
-        '__memory_base', '__table_base',
+        "__wasm_call_ctors",
+        "memory",
+        "__dso_handle",
+        "__data_end",
+        "__stack_low",
+        "__stack_high",
+        "__global_base",
+        "__heap_base",
+        "__heap_end",
+        "__memory_base",
+        "__table_base",
     }
 
     for export_name, func_name in exports:
@@ -384,9 +393,9 @@ def _auto_detect_function(wat_text: str) -> str:
             return func_name
 
     # Fallback: find any func that's not __wasm_call_ctors
-    all_funcs = re.findall(r'\(func\s+(\$\w+)', wat_text)
+    all_funcs = re.findall(r"\(func\s+(\$\w+)", wat_text)
     for f in all_funcs:
-        if f != '$__wasm_call_ctors':
+        if f != "$__wasm_call_ctors":
             return f
 
     raise ValueError("No user-defined functions found in compiled WASM")
@@ -397,7 +406,7 @@ def compile_and_run(
     args: List[int],
     *,
     func_name: Optional[str] = None,
-    opt_level: str = '-O1',
+    opt_level: str = "-O1",
     max_steps: int = 50000,
 ) -> int:
     """Compile C source and execute with given arguments.
@@ -415,13 +424,13 @@ def compile_and_run(
     Returns:
         Top-of-stack value after execution (the function's return value).
     """
-    from isa import program as make_prog
-    from executor import NumPyExecutor
+    from .isa import program as make_prog
+    from .executor import NumPyExecutor
 
     prog = compile_c(source, func_name=func_name, opt_level=opt_level)
 
     # Prepend argument pushes (WASM calling convention: args on stack)
-    arg_instrs = make_prog(*[('PUSH', a) for a in args])
+    arg_instrs = make_prog(*[("PUSH", a) for a in args])
     full_prog = _offset_jumps(arg_instrs, prog)
 
     trace = NumPyExecutor().execute(full_prog, max_steps=max_steps)
@@ -429,6 +438,7 @@ def compile_and_run(
 
 
 # ─── Self-test / main ─────────────────────────────────────────────
+
 
 def main():
     """Run the C pipeline self-tests."""
@@ -442,8 +452,8 @@ def main():
         print("Or download wabt from https://github.com/WebAssembly/wabt/releases")
         sys.exit(0)
 
-    from executor import NumPyExecutor
-    from isa import program as make_prog
+    from .executor import NumPyExecutor
+    from .isa import program as make_prog
 
     np_exec = NumPyExecutor()
     passed = 0
@@ -464,16 +474,16 @@ def main():
     print("\n=== Test 1: int add(int a, int b) { return a + b; } ===")
     add_src = "int add(int a, int b) { return a + b; }"
 
-    prog = compile_c(add_src, func_name='add')
+    prog = compile_c(add_src, func_name="add")
     print(f"  Compiled to {len(prog)} instructions")
 
     # Execute: add(3, 5) = 8
-    full = _offset_jumps(make_prog(('PUSH', 3), ('PUSH', 5)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 3), ("PUSH", 5)), prog)
     trace = np_exec.execute(full)
     check("add(3, 5)", trace.steps[-1].top, 8)
 
     # Execute: add(100, 200) = 300
-    full = _offset_jumps(make_prog(('PUSH', 100), ('PUSH', 200)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 100), ("PUSH", 200)), prog)
     trace = np_exec.execute(full)
     check("add(100, 200)", trace.steps[-1].top, 300)
 
@@ -495,19 +505,19 @@ def main():
         return steps;
     }
     """
-    prog = compile_c(collatz_src, func_name='collatz_steps', opt_level='-O1')
+    prog = compile_c(collatz_src, func_name="collatz_steps", opt_level="-O1")
     print(f"  Compiled to {len(prog)} instructions")
 
     # Collatz(6): 6→3→10→5→16→8→4→2→1 = 8 steps
-    result = compile_and_run(collatz_src, [6], func_name='collatz_steps')
+    result = compile_and_run(collatz_src, [6], func_name="collatz_steps")
     check("collatz_steps(6)", result, 8)
 
     # Collatz(1) = 0 steps
-    result = compile_and_run(collatz_src, [1], func_name='collatz_steps')
+    result = compile_and_run(collatz_src, [1], func_name="collatz_steps")
     check("collatz_steps(1)", result, 0)
 
     # Collatz(27) = 111 steps (famous long sequence)
-    result = compile_and_run(collatz_src, [27], func_name='collatz_steps')
+    result = compile_and_run(collatz_src, [27], func_name="collatz_steps")
     check("collatz_steps(27)", result, 111)
 
     # ── Test 2b: Sum loop via manual WAT (demonstrates WAT path) ──
@@ -542,18 +552,20 @@ def main():
     raw_prog = parse_wat(loop_wat)
     # Add parameter setup: init locals 1,2 to 0, then pop arg to local 0
     setup = make_prog(
-        ('PUSH', 0), ('LOCAL.SET', 1),
-        ('PUSH', 0), ('LOCAL.SET', 2),
-        ('LOCAL.SET', 0),
+        ("PUSH", 0),
+        ("LOCAL.SET", 1),
+        ("PUSH", 0),
+        ("LOCAL.SET", 2),
+        ("LOCAL.SET", 0),
     )
     prog = _offset_jumps(setup, raw_prog)
     print(f"  Compiled from WAT to {len(prog)} instructions (with setup)")
 
-    full = _offset_jumps(make_prog(('PUSH', 10)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 10)), prog)
     trace = np_exec.execute(full)
     check("sum_loop(10)", trace.steps[-1].top, 45)
 
-    full = _offset_jumps(make_prog(('PUSH', 5)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 5)), prog)
     trace = np_exec.execute(full)
     check("sum_loop(5)", trace.steps[-1].top, 10)
 
@@ -567,21 +579,21 @@ def main():
     """
     # clang -O1 turns tail-recursive factorial into a loop with locals,
     # which is perfect for our ISA
-    prog = compile_c(fact_src, func_name='factorial', opt_level='-O1')
+    prog = compile_c(fact_src, func_name="factorial", opt_level="-O1")
     print(f"  Compiled to {len(prog)} instructions")
 
     # Execute: factorial(5) = 120
-    full = _offset_jumps(make_prog(('PUSH', 5)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 5)), prog)
     trace = np_exec.execute(full)
     check("factorial(5)", trace.steps[-1].top, 120)
 
     # Execute: factorial(1) = 1
-    full = _offset_jumps(make_prog(('PUSH', 1)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 1)), prog)
     trace = np_exec.execute(full)
     check("factorial(1)", trace.steps[-1].top, 1)
 
     # Execute: factorial(10) = 3628800
-    full = _offset_jumps(make_prog(('PUSH', 10)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 10)), prog)
     trace = np_exec.execute(full)
     check("factorial(10)", trace.steps[-1].top, 3628800)
 
@@ -591,11 +603,11 @@ def main():
     # Float code should fail in strict mode
     float_src = "float addf(float a, float b) { return a + b; }"
     try:
-        compile_c(float_src, func_name='addf', strict=True)
+        compile_c(float_src, func_name="addf", strict=True)
         print("  FAIL: should have raised ValueError for floats")
         failed += 1
     except ValueError as e:
-        if 'f32' in str(e).lower() or 'float' in str(e).lower():
+        if "f32" in str(e).lower() or "float" in str(e).lower():
             print(f"  PASS: float detection ({str(e)[:60]}...)")
             passed += 1
         else:
@@ -605,31 +617,31 @@ def main():
     # ── Test 5: Auto-detect function name ────────────────────────
     print("\n=== Test 5: auto-detect function name ===")
     prog = compile_c(add_src)  # no func_name specified
-    full = _offset_jumps(make_prog(('PUSH', 7), ('PUSH', 8)), prog)
+    full = _offset_jumps(make_prog(("PUSH", 7), ("PUSH", 8)), prog)
     trace = np_exec.execute(full)
     check("auto-detect add(7, 8)", trace.steps[-1].top, 15)
 
     # ── Test 6: compile_and_run convenience ──────────────────────
     print("\n=== Test 6: compile_and_run ===")
-    result = compile_and_run(add_src, [10, 20], func_name='add')
+    result = compile_and_run(add_src, [10, 20], func_name="add")
     check("compile_and_run add(10, 20)", result, 30)
 
-    result = compile_and_run(fact_src, [7], func_name='factorial')
+    result = compile_and_run(fact_src, [7], func_name="factorial")
     check("compile_and_run factorial(7)", result, 5040)
 
     # ── Test 7: compile_c_to_wat (intermediate) ──────────────────
     print("\n=== Test 7: compile_c_to_wat ===")
     wat = compile_c_to_wat(add_src)
-    check("WAT contains func $add", '$add' in wat, True)
-    check("WAT is module", wat.strip().startswith('(module'), True)
+    check("WAT contains func $add", "$add" in wat, True)
+    check("WAT is module", wat.strip().startswith("(module"), True)
 
     # ── Summary ──────────────────────────────────────────────────
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"C Pipeline: {passed} passed, {failed} failed")
     if failed:
         sys.exit(1)
     print("All tests passed!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
