@@ -30,6 +30,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.2",
     "ruff>=0.8",
 ]
 
@@ -38,6 +39,10 @@ package = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_as_computer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+collect_ignore_glob = ["src/*"]
 
 [tool.ruff]
 lint.extend-select = ["ALL"]

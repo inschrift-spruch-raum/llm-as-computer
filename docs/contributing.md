@@ -31,8 +31,7 @@ uv sync
 
 ```bash
 # 运行集成测试，确认一切正常
-uv run test_consolidated.py
-uv run test_wat_parser.py
+uv run pytest tests/ -v
 ```
 
 ## 代码规范
@@ -51,7 +50,7 @@ wat_parser.py   ← WebAssembly 文本格式解析器
 
 导入链：`isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`
 
-修改某个模块时注意下游依赖。`test_consolidated.py` 直接导入 `phase14_extended_isa`，改动 phase 文件可能破坏集成测试。
+修改某个模块时注意下游依赖。`tests/test_consolidated.py` 直接导入 `phase14_extended_isa`，改动 phase 文件可能破坏集成测试。
 
 ### 浮点精度：强制 Float64
 
@@ -154,13 +153,8 @@ if not compare_traces(np_trace, torch_trace):
 ### 运行测试
 
 ```bash
-# 完整集成测试
-uv run test_consolidated.py
-uv run test_wat_parser.py
-
-# 单个阶段测试（每个文件独立运行）
-uv run dev/phases/phase14_extended_isa.py
-uv run dev/phases/phase17_function_calls.py
+# 运行全部测试
+uv run pytest tests/ -v
 ```
 
 阶段文件（`phaseN_*.py`）是自包含的，各自带测试工具。可以直接运行。

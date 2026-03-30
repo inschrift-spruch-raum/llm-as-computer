@@ -136,8 +136,8 @@ src/llm_as_computer/c_pipeline.py C → WAT → ISA compilation pipeline
 
 ### Tests
 ```
-test_consolidated.py    Integration tests (NumPy/PyTorch equivalence)
-test_wat_parser.py      WAT parser test suite
+tests/test_consolidated.py    Integration tests (NumPy/PyTorch equivalence)
+tests/test_wat_parser.py      WAT parser test suite
 ```
 
 ### Mojo Backend (`src/`)

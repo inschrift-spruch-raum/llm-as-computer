@@ -6,36 +6,20 @@ Verifies:
 3. All WAT instruction categories parse and execute
 """
 
-import sys
+import pytest
+
 from llm_as_computer.wat_parser import parse_wat
 from llm_as_computer.isa import Instruction, OP_PUSH, OP_HALT, compare_traces
 from llm_as_computer.executor import NumPyExecutor
-from llm_as_computer.programs import ALL_TESTS, fib
+from llm_as_computer.programs import ALL_TESTS
 
 
-def run_and_compare(name, wat_text, expected_top, *, tuple_prog=None, verbose=False):
-    """Parse WAT, execute, check top-of-stack, and optionally compare traces."""
-    exe = NumPyExecutor()
-    wat_prog = parse_wat(wat_text)
+# ─── Fixtures ──────────────────────────────────────────────────────
 
-    trace_wat = exe.execute(wat_prog)
-    got_top = trace_wat.steps[-1].top if trace_wat.steps else None
 
-    ok = True
-    if got_top != expected_top:
-        print(f"  FAIL: {name} — expected top={expected_top}, got {got_top}")
-        ok = False
-
-    if tuple_prog is not None:
-        trace_tuple = exe.execute(tuple_prog)
-        match, msg = compare_traces(trace_tuple, trace_wat)
-        if not match:
-            print(f"  FAIL: {name} — trace mismatch: {msg}")
-            ok = False
-
-    if ok:
-        print(f"  PASS: {name}")
-    return ok
+@pytest.fixture
+def executor():
+    return NumPyExecutor()
 
 
 # ─── Phase 4 Test Programs in WAT ────────────────────────────────
@@ -353,149 +337,160 @@ WAT_BITWISE = """
 """
 
 
-# ─── Main test runner ─────────────────────────────────────────────
+# ─── Phase 4: trace comparison with tuple versions ────────────────
 
 
-def main():
-    print("=== WAT Parser Integration Tests ===\n")
-    passed = 0
-    failed = 0
+@pytest.mark.parametrize(
+    "test_name,test_fn",
+    ALL_TESTS,
+    ids=lambda x: x[0] if isinstance(x, tuple) else str(x),
+)
+def test_phase4_wat_trace_equivalence(executor, test_name, test_fn):
+    """WAT versions of Phase 4 programs produce identical traces to tuple versions."""
+    wat_text = WAT_PHASE4.get(test_name)
+    if wat_text is None:
+        pytest.skip(f"No WAT version for {test_name}")
 
-    def run(name, wat, expected, tuple_prog=None):
-        nonlocal passed, failed
-        if run_and_compare(name, wat, expected, tuple_prog=tuple_prog):
-            passed += 1
-        else:
-            failed += 1
+    tuple_prog, expected = test_fn()
+    wat_prog = parse_wat(wat_text)
 
-    # ── Phase 4 trace-level comparison ──
-    print("Phase 4 programs (trace comparison with tuple versions):")
-    for test_name, test_fn in ALL_TESTS:
-        tuple_prog, expected = test_fn()
-        wat_text = WAT_PHASE4.get(test_name)
-        if wat_text is None:
-            print(f"  SKIP: {test_name} (no WAT version)")
-            continue
-        run(test_name, wat_text, expected, tuple_prog=tuple_prog)
+    tuple_trace = executor.execute(tuple_prog)
+    wat_trace = executor.execute(wat_prog)
 
-    # ── Algorithm tests ──
-    print("\nAlgorithm programs:")
-    run("fibonacci(10)", WAT_FIBONACCI_10, 55)
-    run("factorial(5)", WAT_FACTORIAL_5, 120)
-    run("sum(1..10)", WAT_SUM_1_TO_10, 55)
-    run("power(2,7)", WAT_POWER_2_7, 128)
-    run("bubble_sort", WAT_BUBBLE_SORT, 5)
+    match, detail = compare_traces(tuple_trace, wat_trace)
+    assert match, f"Trace mismatch for {test_name}: {detail}"
+    assert wat_trace.steps[-1].top == expected
 
-    # ── Control flow tests ──
-    print("\nControl flow:")
-    run("if/else", WAT_IF_ELSE, 10)
-    run("nested_blocks", WAT_NESTED_BLOCKS, 1)
 
-    # ── Instruction category tests ──
-    print("\nInstruction categories:")
-    run("arithmetic", WAT_ARITHMETIC, 14)
-    run("comparison_chain", WAT_COMPARISON_CHAIN, 1)
-    run("bitwise", WAT_BITWISE, 255)
+# ─── Algorithm programs ──────────────────────────────────────────
 
-    # ── Edge cases ──
-    print("\nEdge cases:")
 
-    # Empty program
+_ALGORITHM_TESTS = [
+    ("fibonacci(10)", WAT_FIBONACCI_10, 55),
+    ("factorial(5)", WAT_FACTORIAL_5, 120),
+    ("sum(1..10)", WAT_SUM_1_TO_10, 55),
+    ("power(2,7)", WAT_POWER_2_7, 128),
+    ("bubble_sort", WAT_BUBBLE_SORT, 5),
+]
+
+
+@pytest.mark.parametrize(
+    "name,wat_text,expected", _ALGORITHM_TESTS, ids=[t[0] for t in _ALGORITHM_TESTS]
+)
+def test_algorithm_programs(executor, name, wat_text, expected):
+    """Algorithm programs execute correctly via WAT."""
+    prog = parse_wat(wat_text)
+    trace = executor.execute(prog)
+    assert trace.steps[-1].top == expected
+
+
+# ─── Control flow ────────────────────────────────────────────────
+
+
+_CONTROL_FLOW_TESTS = [
+    ("if_else", WAT_IF_ELSE, 10),
+    ("nested_blocks", WAT_NESTED_BLOCKS, 1),
+]
+
+
+@pytest.mark.parametrize(
+    "name,wat_text,expected",
+    _CONTROL_FLOW_TESTS,
+    ids=[t[0] for t in _CONTROL_FLOW_TESTS],
+)
+def test_control_flow(executor, name, wat_text, expected):
+    """Control flow constructs execute correctly via WAT."""
+    prog = parse_wat(wat_text)
+    trace = executor.execute(prog)
+    assert trace.steps[-1].top == expected
+
+
+# ─── Instruction category tests ──────────────────────────────────
+
+
+_INSTRUCTION_CATEGORY_TESTS = [
+    ("arithmetic", WAT_ARITHMETIC, 14),
+    ("comparison_chain", WAT_COMPARISON_CHAIN, 1),
+    ("bitwise", WAT_BITWISE, 255),
+]
+
+
+@pytest.mark.parametrize(
+    "name,wat_text,expected",
+    _INSTRUCTION_CATEGORY_TESTS,
+    ids=[t[0] for t in _INSTRUCTION_CATEGORY_TESTS],
+)
+def test_instruction_categories(executor, name, wat_text, expected):
+    """Instruction category programs execute correctly via WAT."""
+    prog = parse_wat(wat_text)
+    trace = executor.execute(prog)
+    assert trace.steps[-1].top == expected
+
+
+# ─── Edge cases ──────────────────────────────────────────────────
+
+
+def test_empty_input():
+    """Empty input produces empty program."""
     prog = parse_wat("")
-    ok = len(prog) == 0
-    if ok:
-        print("  PASS: empty input")
-        passed += 1
-    else:
-        print(f"  FAIL: empty input — got {prog}")
-        failed += 1
+    assert len(prog) == 0
 
-    # Comments only
+
+def test_comments_only():
+    """Comments-only input produces empty program."""
     prog = parse_wat(";; just a comment\n(; block ;)")
-    ok = len(prog) == 0
-    if ok:
-        print("  PASS: comments only")
-        passed += 1
-    else:
-        print(f"  FAIL: comments only — got {prog}")
-        failed += 1
+    assert len(prog) == 0
 
-    # Negative integer
+
+def test_negative_integer(executor):
+    """Negative integer constants parse and execute correctly."""
     prog = parse_wat("i32.const -5 halt")
-    exe = NumPyExecutor()
-    trace = exe.execute(prog)
-    top = trace.steps[-1].top
-    if top == -5:
-        print("  PASS: negative integer")
-        passed += 1
-    else:
-        print(f"  FAIL: negative integer — expected -5, got {top}")
-        failed += 1
+    trace = executor.execute(prog)
+    assert trace.steps[-1].top == -5
 
-    # Hex literal
+
+def test_hex_literal(executor):
+    """Hex literal constants parse and execute correctly."""
     prog = parse_wat("i32.const 0x1A halt")
-    trace = exe.execute(prog)
-    top = trace.steps[-1].top
-    if top == 26:
-        print("  PASS: hex literal execution")
-        passed += 1
-    else:
-        print(f"  FAIL: hex literal — expected 26, got {top}")
-        failed += 1
+    trace = executor.execute(prog)
+    assert trace.steps[-1].top == 26
 
-    # S-expression form
-    prog = parse_wat("""
+
+def test_s_expression_form(executor):
+    """S-expression form parses and executes correctly."""
+    prog = parse_wat(
+        """
         (i32.add
           (i32.const 3)
           (i32.const 5))
         halt
-    """)
-    trace = exe.execute(prog)
-    top = trace.steps[-1].top
-    if top == 8:
-        print("  PASS: s-expression form")
-        passed += 1
-    else:
-        print(f"  FAIL: s-expression form — expected 8, got {top}")
-        failed += 1
+    """
+    )
+    trace = executor.execute(prog)
+    assert trace.steps[-1].top == 8
 
-    # Module + func wrapper
-    prog = parse_wat("""
+
+def test_module_func_wrapper():
+    """Module + func wrapper is stripped correctly."""
+    prog = parse_wat(
+        """
         (module
           (func $main
             i32.const 99
           )
         )
-    """)
-    if prog[0] == Instruction(OP_PUSH, 99):
-        print("  PASS: module+func wrapper")
-        passed += 1
-    else:
-        print(f"  FAIL: module+func wrapper — got {prog}")
-        failed += 1
+    """
+    )
+    assert prog[0] == Instruction(OP_PUSH, 99)
 
-    # Error handling
-    try:
+
+def test_missing_arg_raises():
+    """Missing argument raises ValueError."""
+    with pytest.raises(ValueError):
         parse_wat("i32.const")
-        print("  FAIL: missing arg should raise")
-        failed += 1
-    except ValueError:
-        print("  PASS: missing arg raises ValueError")
-        passed += 1
 
-    try:
+
+def test_unknown_instruction_raises():
+    """Unknown instruction raises ValueError."""
+    with pytest.raises(ValueError):
         parse_wat("invalid_instruction")
-        print("  FAIL: unknown instruction should raise")
-        failed += 1
-    except ValueError:
-        print("  PASS: unknown instruction raises ValueError")
-        passed += 1
-
-    print(f"\n{passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)
-    print("All tests passed!")
-
-
-if __name__ == "__main__":
-    main()

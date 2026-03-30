@@ -24,11 +24,9 @@ Compiled transformer executor — programs run inside a transformer's own infere
 │   ├── benchmark.py        # Benchmark runner
 │   ├── llm_vs_native.py    # LLM vs native comparison
 │   └── run_mojo_tests.py   # Mojo test runner
-├── test_consolidated.py    # Integration tests (NumPy/PyTorch equivalence)
-├── test_wat_parser.py      # WAT parser test suite
-├── pyproject.toml          # uv project config (src/ layout, hatchling build)
-├── uv.lock                 # Reproducible dependency lockfile
-├── .python-version         # Python 3.14
+├── tests/
+│   ├── test_consolidated.py # Integration tests (NumPy/PyTorch equivalence)
+│   └── test_wat_parser.py   # WAT parser test suite
 ├── dev/
 │   ├── phases/             # 20 phase exploration scripts (1–20) + result JSONs
 │   ├── FINDINGS.md         # Detailed per-phase findings
@@ -40,7 +38,9 @@ Compiled transformer executor — programs run inside a transformer's own infere
 │   ├── development/        # findings-summary.md, rd-plan-summary.md
 │   └── reference/          # api.md, file-map.md
 ├── examples/               # Hungarian algorithm, Sudoku solver
-└── viz/                    # React visualizations
+├── pyproject.toml          # uv project config (src/ layout, hatchling build)
+├── uv.lock                 # Reproducible dependency lockfile
+└── .python-version         # Python 3.14
 ```
 
 ## WHERE TO LOOK
@@ -113,7 +113,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 
 ## CONVENTIONS
 
-- **No test framework** — All tests are hand-rolled `main()` runners with pass/fail counters. No pytest, no unittest.
+- **pytest** — Test suite uses pytest with parametrized tests and fixtures. `uv run pytest tests/ -v` to run all.
 - **Dual-executor validation** — Every test must verify NumPyExecutor AND TorchExecutor produce identical traces via `compare_traces()`.
 - **i32 overflow semantics** — All arithmetic applies `result & 0xFFFFFFFF` (WASM standard). `PUSH 0xFFFFFFFF; PUSH 1; ADD` → `0`.
 - **TRAP for runtime errors** — Division by zero, stack underflow emit OP_TRAP (opcode 99), not Python exceptions.
@@ -131,8 +131,7 @@ uv sync
 uv sync --group dev
 
 # Run integration tests
-uv run test_consolidated.py
-uv run test_wat_parser.py
+uv run pytest tests/ -v
 
 # Run individual phase
 uv run dev/phases/phase14_extended_isa.py
@@ -154,6 +153,6 @@ uv sync --locked
 - **File reading:** Start with `docs/reference/api.md` for function-level indexing, or `docs/reference/file-map.md` for file-level navigation. For files >500 lines, use index-then-target pattern.
 - **Environment:** `uv sync` at session start installs all dependencies and the package. Mojo available via `/mnt/skills/user/llm-as-computer/`.
 - **Container limits:** ~200s bash timeout, ~15 min session, 8GB RAM. Desktop: longer sessions, 16GB RAM.
-- **Phase file imports:** Phase files 15-20 use `from llm_as_computer.X import ...` for core modules. Inter-phase imports (e.g., phase14 → phase4) use `sys.path.insert` for bare module names within `dev/phases/`. `test_consolidated.py` imports `phase14_extended_isa` via `sys.path` — changing phase14 breaks integration tests.
+- **Phase file imports:** Phase files 15-20 use `from llm_as_computer.X import ...` for core modules. Inter-phase imports (e.g., phase14 → phase4) use `sys.path.insert` for bare module names within `dev/phases/`. `tests/test_consolidated.py` imports `phase14_extended_isa` via `sys.path` — changing phase14 breaks integration tests.
 - **C pipeline dependencies:** Requires `clang` with wasm32 target support + `wasm2wat`. Raises `EnvironmentError` if missing.
 - **Recall tags:** `recall("llm-as-computer", n=10)` or `recall("percepta", n=5)`.

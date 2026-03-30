@@ -20,8 +20,8 @@
 | 文件 | 行数 | 说明 |
 |------|------|------|
 | `src/llm_as_computer/programs.py` | 625 | 测试程序生成器：fib、multiply、gcd、factorial、位运算等 30+ 个 `make_*` 函数 |
-| `test_consolidated.py` | 468 | 集成测试：NumPy 执行器等价性、PyTorch 执行器等价性、双执行器交叉验证 |
-| `test_wat_parser.py` | 500 | WAT 解析器测试套件：解析、编译、执行全链路验证 |
+| `tests/test_consolidated.py` | 468 | 集成测试：NumPy 执行器等价性、PyTorch 执行器等价性、双执行器交叉验证 |
+| `tests/test_wat_parser.py` | 500 | WAT 解析器测试套件：解析、编译、执行全链路验证 |
 
 每个测试都必须通过 `compare_traces()` 验证 NumPyExecutor 和 TorchExecutor 产生完全一致的执行轨迹。
 

@@ -39,7 +39,7 @@ print(trace.format_trace())
 把上面的代码保存为 `first.py`, 然后在项目根目录运行:
 
 ```bash
-uv run first.py
+uv run pytest tests/ -v
 ```
 
 ## 预期输出
