@@ -153,8 +153,8 @@ The naive version is slower than a regular interpreter. The structured version (
 ## Try it yourself
 
 ```python
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from llm_as_computer.executor import NumPyExecutor
+from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from transturing.executor import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 3),

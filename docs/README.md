@@ -1,4 +1,4 @@
-# llm-as-computer 文档
+# transturing 文档
 
 > 编译型 transformer 执行器, 程序在 transformer 自身的推理循环中运行。每条指令获取和内存读取都是一个抛物线注意力头。transformer **就是** 计算机。55 操作码 WASM 风格 ISA, Python 后端 (PyTorch/NumPy)。
 

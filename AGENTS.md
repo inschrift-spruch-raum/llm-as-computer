@@ -11,7 +11,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 ```
 ./
 ├── src/
-│   └── llm_as_computer/    # Python package (pip installable)
+│   └── transturing/    # Python package (pip installable)
 │       ├── __init__.py
 │       ├── isa.py          # 55 opcodes, TokenVocab, embeddings, CompiledAttentionHead
 │       ├── executor.py     # NumPyExecutor, CompiledModel (PyTorch nn.Module), TorchExecutor
@@ -37,12 +37,12 @@ Compiled transformer executor — programs run inside a transformer's own infere
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Add an opcode | `src/llm_as_computer/isa.py` + `executor.py` | Must update both NumPyExecutor AND CompiledModel |
-| Write a test program | `src/llm_as_computer/programs.py` | Follow `make_*` pattern, add to test runner |
-| Understand an embedding | `src/llm_as_computer/isa.py` → `embed_*` functions | After line 730; see DIM layout at line 114 |
-| Debug execution trace | `src/llm_as_computer/isa.py` → `compare_traces()` | Step-by-step diff |
-| Add structured control flow | `src/llm_as_computer/assembler.py` | WASM-style block/loop/if/br |
-| Parse WAT text | `src/llm_as_computer/wat_parser.py` | Handles full WAT syntax |
+| Add an opcode | `src/transturing/isa.py` + `executor.py` | Must update both NumPyExecutor AND CompiledModel |
+| Write a test program | `src/transturing/programs.py` | Follow `make_*` pattern, add to test runner |
+| Understand an embedding | `src/transturing/isa.py` → `embed_*` functions | After line 730; see DIM layout at line 114 |
+| Debug execution trace | `src/transturing/isa.py` → `compare_traces()` | Step-by-step diff |
+| Add structured control flow | `src/transturing/assembler.py` | WASM-style block/loop/if/br |
+| Parse WAT text | `src/transturing/wat_parser.py` | Handles full WAT syntax |
 | Read documentation | `docs/` | Start with `docs/guides/how-it-works.md` |
 
 ## ARCHITECTURE
@@ -62,7 +62,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 
 **Parabolic encoding:** `k = (2j, -j²)` encodes position j. Dot-product attention peaks sharply at target. Same encoding for all memory spaces. Float32 limit ~4K indices; float64 extends to 25M+.
 
-**Import chain:** `isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`. Relative imports within the `llm_as_computer` package. External consumers use `from llm_as_computer.X import ...`.
+**Import chain:** `isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`. Relative imports within the `transturing` package. External consumers use `from transturing.X import ...`.
 
 ## PHASES
 
@@ -100,7 +100,7 @@ Compiled transformer executor — programs run inside a transformer's own infere
 - **NEVER suppress type errors** — No `as any`, `@ts-ignore`, `# type: ignore`.
 - **NEVER read large files blind** — Use `docs/reference/api.md` as function index, then targeted line-range reads. `executor.py` (~1360 lines) is the main trap.
 - **Do NOT pin exact dependency versions** — Research repo; use `>=` lower bounds.
-- **Do NOT use bare module imports** — Always `from llm_as_computer.X import ...`, never `from isa import ...`.
+- **Do NOT use bare module imports** — Always `from transturing.X import ...`, never `from isa import ...`.
 
 ## CONVENTIONS
 

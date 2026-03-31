@@ -8,10 +8,10 @@ Verifies:
 
 import pytest
 
-from llm_as_computer.wat_parser import parse_wat
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_HALT, compare_traces
-from llm_as_computer.executor import NumPyExecutor
-from llm_as_computer.programs import ALL_TESTS
+from transturing.wat_parser import parse_wat
+from transturing.isa import Instruction, OP_PUSH, OP_HALT, compare_traces
+from transturing.executor import NumPyExecutor
+from transturing.programs import ALL_TESTS
 
 
 # ─── Fixtures ──────────────────────────────────────────────────────

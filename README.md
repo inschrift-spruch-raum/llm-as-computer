@@ -1,4 +1,4 @@
-# llm-as-computer
+# transturing
 
 A compiled transformer executor that runs programs inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head — no external interpreter, no tool use. The transformer *is* the computer.
 
@@ -25,7 +25,7 @@ Full documentation is in the [docs/](docs/) directory:
 
 ## Benchmark Results
 
-Million-step benchmarks validating the executor at scale: [Issue #52](https://github.com/oaustegard/llm-as-computer/issues/52#issuecomment-2752773503). Key numbers: Python at **2.1–3.1M steps/sec**, 1.2M steps in 561ms.
+Million-step benchmarks validating the executor at scale: [Issue #52](https://github.com/oaustegard/transturing/issues/52#issuecomment-2752773503). Key numbers: Python at **2.1–3.1M steps/sec**, 1.2M steps in 561ms.
 
 ## ISA Reference
 
@@ -124,14 +124,14 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 
 ## Files
 
-### Core (`src/llm_as_computer/`)
+### Core (`src/transturing/`)
 ```
-src/llm_as_computer/isa.py       ISA definition: 55 opcodes, types, embedding layout
-src/llm_as_computer/executor.py  NumPy + PyTorch compiled transformer executors
-src/llm_as_computer/programs.py  Test programs and algorithm generators
-src/llm_as_computer/assembler.py WASM-style structured control flow → flat ISA compiler
-src/llm_as_computer/wat_parser.py WebAssembly text format parser
-src/llm_as_computer/c_pipeline.py C → WAT → ISA compilation pipeline
+src/transturing/isa.py       ISA definition: 55 opcodes, types, embedding layout
+src/transturing/executor.py  NumPy + PyTorch compiled transformer executors
+src/transturing/programs.py  Test programs and algorithm generators
+src/transturing/assembler.py WASM-style structured control flow → flat ISA compiler
+src/transturing/wat_parser.py WebAssembly text format parser
+src/transturing/c_pipeline.py C → WAT → ISA compilation pipeline
 ```
 
 ### Tests

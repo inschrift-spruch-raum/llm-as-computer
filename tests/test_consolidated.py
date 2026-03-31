@@ -1,12 +1,12 @@
 """Executor correctness tests: verify NumPy and PyTorch backends produce expected results.
 
-Imports from the core package (llm_as_computer).
+Imports from the core package (transturing).
 Cross-validates NumPy vs PyTorch traces for internal consistency.
 """
 
 import pytest
 
-from llm_as_computer.isa import (
+from transturing.isa import (
     Instruction,
     compare_traces,
     OP_PUSH,
@@ -53,8 +53,8 @@ from llm_as_computer.isa import (
     OP_SELECT,
     OP_TRAP,
 )
-from llm_as_computer.executor import NumPyExecutor, TorchExecutor
-from llm_as_computer.programs import (
+from transturing.executor import NumPyExecutor, TorchExecutor
+from transturing.programs import (
     ALL_TESTS,
     make_fibonacci,
     make_power_of_2,

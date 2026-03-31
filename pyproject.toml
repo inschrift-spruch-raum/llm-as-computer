@@ -1,5 +1,5 @@
 [project]
-name = "llm-as-computer"
+name = "transturing"
 version = "0.1.0"
 description = "Compiled transformer executor — programs run inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head."
 readme = "README.md"

@@ -8,10 +8,10 @@
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `src/llm_as_computer/isa.py` | 869 | 55 操作码定义、TokenVocab 词表、抛物线嵌入函数、CompiledAttentionHead、compare_traces 对比工具 |
-| `src/llm_as_computer/executor.py` | 1360 | NumPyExecutor（NumPy 后端）、CompiledModel（PyTorch nn.Module）、TorchExecutor（PyTorch 后端） |
+| `src/transturing/isa.py` | 869 | 55 操作码定义、TokenVocab 词表、抛物线嵌入函数、CompiledAttentionHead、compare_traces 对比工具 |
+| `src/transturing/executor.py` | 1360 | NumPyExecutor（NumPy 后端）、CompiledModel（PyTorch nn.Module）、TorchExecutor（PyTorch 后端） |
 
-这两个文件构成了整个系统的核心：`src/llm_as_computer/isa.py` 定义指令集和编码方案，`src/llm_as_computer/executor.py` 实现两个等价的执行器。所有操作码的权重通过 `_compile_weights()` 解析计算，不依赖训练。
+这两个文件构成了整个系统的核心：`src/transturing/isa.py` 定义指令集和编码方案，`src/transturing/executor.py` 实现两个等价的执行器。所有操作码的权重通过 `_compile_weights()` 解析计算，不依赖训练。
 
 ---
 
@@ -19,7 +19,7 @@
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `src/llm_as_computer/programs.py` | 703 | 测试程序生成器：fib、multiply、gcd、factorial、位运算等 30+ 个 `make_*` 函数 |
+| `src/transturing/programs.py` | 703 | 测试程序生成器：fib、multiply、gcd、factorial、位运算等 30+ 个 `make_*` 函数 |
 | `tests/test_consolidated.py` | 485 | 集成测试：NumPy 执行器等价性、PyTorch 执行器等价性、双执行器交叉验证 |
 | `tests/test_wat_parser.py` | 496 | WAT 解析器测试套件：解析、编译、执行全链路验证 |
 
@@ -31,11 +31,11 @@
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `src/llm_as_computer/assembler.py` | 229 | WASM 风格结构化控制流编译器（block/loop/if/br/br_table → 扁平 ISA） |
-| `src/llm_as_computer/wat_parser.py` | 777 | WebAssembly 文本格式（WAT）解析器，完整支持 WAT 语法 |
-| `src/llm_as_computer/c_pipeline.py` | 647 | C → WAT → ISA 编译管线（需要 clang + wasm2wat） |
+| `src/transturing/assembler.py` | 229 | WASM 风格结构化控制流编译器（block/loop/if/br/br_table → 扁平 ISA） |
+| `src/transturing/wat_parser.py` | 777 | WebAssembly 文本格式（WAT）解析器，完整支持 WAT 语法 |
+| `src/transturing/c_pipeline.py` | 647 | C → WAT → ISA 编译管线（需要 clang + wasm2wat） |
 
-编译方向：C 源码 → clang 编译为 WASM → wasm2wat 转 WAT 文本 → wat_parser 解析 → assembler 编译为扁平 ISA → executor 执行。所有编译工具链模块位于 `src/llm_as_computer/` 包中。
+编译方向：C 源码 → clang 编译为 WASM → wasm2wat 转 WAT 文本 → wat_parser 解析 → assembler 编译为扁平 ISA → executor 执行。所有编译工具链模块位于 `src/transturing/` 包中。
 
 ---
 

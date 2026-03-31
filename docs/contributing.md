@@ -37,10 +37,10 @@ uv run pytest tests/ -v
 
 ### 项目结构
 
-这是一个 `src/` 布局的 Python 包项目。核心代码位于 `src/llm_as_computer/`：
+这是一个 `src/` 布局的 Python 包项目。核心代码位于 `src/transturing/`：
 
 ```
-src/llm_as_computer/
+src/transturing/
 ├── __init__.py
 ├── isa.py          ← 55 个操作码、TokenVocab、嵌入函数、CompiledAttentionHead
 ├── executor.py     ← NumPyExecutor（参考/演示后端）、CompiledModel（PyTorch nn.Module）、TorchExecutor（PyTorch 主后端）
@@ -50,7 +50,7 @@ src/llm_as_computer/
 └── c_pipeline.py   ← C → WAT → ISA 编译管线
 ```
 
-导入链：`isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`。包内使用相对导入（`from .isa import ...`），外部使用 `from llm_as_computer.X import ...`。
+导入链：`isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`。包内使用相对导入（`from .isa import ...`），外部使用 `from transturing.X import ...`。
 
 修改某个模块时注意下游依赖。
 
@@ -131,12 +131,12 @@ uv run pytest tests/ -v
 
 需要同时更新两个文件：
 
-1. `src/llm_as_computer/isa.py`：操作码定义 + TokenVocab
-2. `src/llm_as_computer/executor.py`：NumPyExecutor 的分派逻辑 + CompiledModel 的编译逻辑
+1. `src/transturing/isa.py`：操作码定义 + TokenVocab
+2. `src/transturing/executor.py`：NumPyExecutor 的分派逻辑 + CompiledModel 的编译逻辑
 
 ### 添加测试程序
 
-在 `src/llm_as_computer/programs.py` 中遵循 `make_*` 命名模式，然后加入测试。
+在 `src/transturing/programs.py` 中遵循 `make_*` 命名模式，然后加入测试。
 
 ## 提交规范
 
@@ -170,12 +170,12 @@ uv run pytest tests/ -v
 
 | 任务 | 入口文件 | 备注 |
 |------|----------|------|
-| 添加操作码 | `src/llm_as_computer/isa.py` + `executor.py` | 两个执行器都要更新 |
-| 编写测试程序 | `src/llm_as_computer/programs.py` | 遵循 `make_*` 命名模式 |
-| 理解嵌入编码 | `src/llm_as_computer/isa.py` 第 733 行起 | `embed_*` 函数 |
-| 调试执行轨迹 | `src/llm_as_computer/isa.py` → `compare_traces()` | 逐步对比 |
-| 添加结构化控制流 | `src/llm_as_computer/assembler.py` | WASM 风格 block/loop/if/br |
-| 解析 WAT 文本 | `src/llm_as_computer/wat_parser.py` | 完整 WAT 语法支持 |
+| 添加操作码 | `src/transturing/isa.py` + `executor.py` | 两个执行器都要更新 |
+| 编写测试程序 | `src/transturing/programs.py` | 遵循 `make_*` 命名模式 |
+| 理解嵌入编码 | `src/transturing/isa.py` 第 733 行起 | `embed_*` 函数 |
+| 调试执行轨迹 | `src/transturing/isa.py` → `compare_traces()` | 逐步对比 |
+| 添加结构化控制流 | `src/transturing/assembler.py` | WASM 风格 block/loop/if/br |
+| 解析 WAT 文本 | `src/transturing/wat_parser.py` | 完整 WAT 语法支持 |
 
 ## 相关文档
 

@@ -10,8 +10,8 @@
 ## 安装
 
 ```bash
-git clone https://github.com/oaustegard/llm-as-computer.git
-cd llm-as-computer
+git clone https://github.com/oaustegard/transturing.git
+cd transturing
 uv sync
 ```
 
@@ -22,8 +22,8 @@ uv sync
 这段程序把 3 和 5 压入栈, 相加, 然后停机。每一行都是一条指令, 每一条指令的获取都是一次注意力操作。
 
 ```python
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from llm_as_computer.executor import NumPyExecutor
+from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from transturing.executor import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 3),

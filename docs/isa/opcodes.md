@@ -26,7 +26,7 @@
 **基本用法 — 三元选择：**
 
 ```python
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_SELECT, OP_HALT
+from transturing.isa import Instruction, OP_PUSH, OP_SELECT, OP_HALT
 
 # 等价于: c ? a : b
 a, b, c = 10, 20, 1
@@ -45,7 +45,7 @@ prog = [
 来自 `programs.py` 的 `make_select_max`：
 
 ```python
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_GT_S, OP_SELECT, OP_HALT
+from transturing.isa import Instruction, OP_PUSH, OP_GT_S, OP_SELECT, OP_HALT
 
 def make_select_max(a, b):
     """用 GT_S + SELECT 计算 max(a, b)，无需条件跳转。"""
@@ -112,7 +112,7 @@ RETURN 执行时：
 来自 `programs.py` 的 `make_factorial` 展示了循环实现的阶乘（与 CALL/RETURN 机制相同的乘法循环）：
 
 ```python
-from llm_as_computer.isa import (Instruction, OP_PUSH, OP_DUP, OP_ROT, OP_MUL, OP_SWAP,
+from transturing.isa import (Instruction, OP_PUSH, OP_DUP, OP_ROT, OP_MUL, OP_SWAP,
                  OP_SUB, OP_JZ, OP_JNZ, OP_POP, OP_HALT)
 
 def make_factorial(n):
@@ -196,7 +196,7 @@ def make_factorial(n):
 ### 代码示例
 
 ```python
-from llm_as_computer.isa import (Instruction, OP_PUSH, OP_LOCAL_GET, OP_LOCAL_SET,
+from transturing.isa import (Instruction, OP_PUSH, OP_LOCAL_GET, OP_LOCAL_SET,
                  OP_LOCAL_TEE, OP_ADD, OP_MUL, OP_HALT)
 
 # 计算 x² + x，使用局部变量保存中间结果
@@ -263,7 +263,7 @@ I32.STORE16:   ... | addr | val | → ... |           (写低 16 位)
 **数组读写 — 给地址 10 的值加上 100 后写回：**
 
 ```python
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_I32_LOAD, OP_I32_STORE, OP_ADD, OP_HALT
+from transturing.isa import Instruction, OP_PUSH, OP_I32_LOAD, OP_I32_STORE, OP_ADD, OP_HALT
 
 prog = [
     Instruction(OP_PUSH, 10),           # 0: addr = 10
@@ -279,7 +279,7 @@ prog = [
 **字节级读写：**
 
 ```python
-from llm_as_computer.isa import Instruction, OP_PUSH, OP_I32_STORE8, OP_I32_LOAD8_U, OP_HALT
+from transturing.isa import Instruction, OP_PUSH, OP_I32_STORE8, OP_I32_LOAD8_U, OP_HALT
 
 # 将 0xAB 写入地址 4，再作为无符号字节读回
 prog = [
@@ -337,7 +337,7 @@ prog = [
 来自 `programs.py` 的 `make_fibonacci`：
 
 ```python
-from llm_as_computer.isa import (Instruction, OP_PUSH, OP_SWAP, OP_OVER, OP_ADD, OP_ROT,
+from transturing.isa import (Instruction, OP_PUSH, OP_SWAP, OP_OVER, OP_ADD, OP_ROT,
                  OP_SUB, OP_DUP, OP_JNZ, OP_POP, OP_HALT)
 
 def make_fibonacci(n):
@@ -378,7 +378,7 @@ def make_fibonacci(n):
 来自 `programs.py` 的 `make_gcd`：
 
 ```python
-from llm_as_computer.isa import (Instruction, OP_PUSH, OP_DUP, OP_JZ, OP_SWAP,
+from transturing.isa import (Instruction, OP_PUSH, OP_DUP, OP_JZ, OP_SWAP,
                  OP_OVER, OP_REM_S, OP_JNZ, OP_NOP, OP_POP, OP_HALT)
 
 def make_gcd(a, b):

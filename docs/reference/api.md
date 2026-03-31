@@ -1,13 +1,13 @@
 # API 参考
 
-核心 Python 类和函数的接口文档。所有类分布在两个模块中：`src/llm_as_computer/isa.py`（ISA 定义、词表、注意力头、嵌入函数、测试工具）和 `src/llm_as_computer/executor.py`（两种执行器和编译模型）。
+核心 Python 类和函数的接口文档。所有类分布在两个模块中：`src/transturing/isa.py`（ISA 定义、词表、注意力头、嵌入函数、测试工具）和 `src/transturing/executor.py`（两种执行器和编译模型）。
 
-> **模块依赖链：** `llm_as_computer.isa` ← `llm_as_computer.executor` ← `llm_as_computer.programs` ← `llm_as_computer.assembler` ← `llm_as_computer.wat_parser` ← `llm_as_computer.c_pipeline`
+> **模块依赖链：** `transturing.isa` ← `transturing.executor` ← `transturing.programs` ← `transturing.assembler` ← `transturing.wat_parser` ← `transturing.c_pipeline`
 
 ## 导入示例
 
 ```python
-from llm_as_computer.isa import (
+from transturing.isa import (
     program, Instruction, Trace, TraceStep,
     TokenVocab, CompiledAttentionHead,
     embed_program_token, embed_stack_entry, embed_state,
@@ -15,7 +15,7 @@ from llm_as_computer.isa import (
     D_MODEL, DTYPE, EPS,
 )
 
-from llm_as_computer.executor import NumPyExecutor, TorchExecutor, CompiledModel
+from transturing.executor import NumPyExecutor, TorchExecutor, CompiledModel
 ```
 
 ---
@@ -26,10 +26,10 @@ from llm_as_computer.executor import NumPyExecutor, TorchExecutor, CompiledModel
 
 纯 NumPy 实现的编译执行器。直接操作浮点数组，不依赖 PyTorch。所有操作码的分发逻辑内联在一个 `execute` 方法中。
 
-**所在文件：** `src/llm_as_computer/executor.py`
+**所在文件：** `src/transturing/executor.py`
 
 ```python
-from llm_as_computer.executor import NumPyExecutor
+from transturing.executor import NumPyExecutor
 
 exec_np = NumPyExecutor()
 trace = exec_np.execute(prog, max_steps=50000)
@@ -60,10 +60,10 @@ trace = exec_np.execute(prog, max_steps=50000)
 
 基于 PyTorch 的执行器，使用 `CompiledModel`（`nn.Module`）执行每一步。内部将程序、栈、局部变量、堆、调用栈编码为嵌入向量，调用模型的 `forward` 方法完成单步计算。
 
-**所在文件：** `src/llm_as_computer/executor.py`
+**所在文件：** `src/transturing/executor.py`
 
 ```python
-from llm_as_computer.executor import TorchExecutor
+from transturing.executor import TorchExecutor
 
 exec_pt = TorchExecutor()
 trace = exec_pt.execute(prog, max_steps=50000)
@@ -88,8 +88,8 @@ trace = exec_pt.execute(prog, max_steps=50000)
 项目中所有测试都要求 NumPy 和 PyTorch 两个执行器产生**完全相同**的轨迹。用 `compare_traces()` 进行逐令牌比对。
 
 ```python
-from llm_as_computer.isa import program, compare_traces, test_algorithm
-from llm_as_computer.executor import NumPyExecutor, TorchExecutor
+from transturing.isa import program, compare_traces, test_algorithm
+from transturing.executor import NumPyExecutor, TorchExecutor
 
 np_exec = NumPyExecutor()
 pt_exec = TorchExecutor()
@@ -112,10 +112,10 @@ print(f"一致: {match}, 详情: {detail}")
 
 继承 `torch.nn.Module` 的编译型 transformer。所有权重通过 `_compile_weights()` 解析设定，不经过训练。10 个注意力头分工明确，前馈层由线性路由矩阵加非线性覆盖组成。
 
-**所在文件：** `src/llm_as_computer/executor.py`
+**所在文件：** `src/transturing/executor.py`
 
 ```python
-from llm_as_computer.executor import CompiledModel
+from transturing.executor import CompiledModel
 
 model = CompiledModel(d_model=51)
 model.eval()
@@ -185,10 +185,10 @@ model.eval()
 
 固定词表类。覆盖执行轨迹中出现的所有令牌类型，提供编码/解码和编译嵌入表的功能。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 ```python
-from llm_as_computer.isa import TokenVocab
+from transturing.isa import TokenVocab
 
 vocab = TokenVocab()
 print(vocab)
@@ -262,7 +262,7 @@ vocab.token_name(102)   # → "V42"
 
 硬最大值（hard-max）注意力头，权重解析设定。这是整个系统的核心计算单元，用于所有内存空间的寻址。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 计算过程：
 
@@ -314,10 +314,10 @@ output = V[argmax(scores)]       → (v_dim,)
 
 快速构建指令列表的便捷函数。接受元组形式的指令描述，返回 `List[Instruction]`。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 ```python
-from llm_as_computer.isa import program
+from transturing.isa import program
 
 # 计算 7 + 3
 prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
@@ -339,7 +339,7 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 逐令牌比较两条执行轨迹。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 **返回：** `(match: bool, detail: str)`
 
@@ -353,7 +353,7 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 在两个执行器上运行同一程序，验证结果和轨迹一致性。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -372,7 +372,7 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 测试预期会触发 TRAP 的程序（如除零、栈下溢）。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 **返回：** `bool`，两个执行器都正确触发 TRAP 且轨迹一致时为 `True`。
 
@@ -382,7 +382,7 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 这组函数将执行状态编码为 `D_MODEL` 维的 `float64` 向量。每个函数设置不同的"类型标记"维度，使注意力头能区分不同内存空间。
 
-**所在文件：** `src/llm_as_computer/isa.py`
+**所在文件：** `src/transturing/isa.py`
 
 | 函数 | 签名 | 用途 |
 |------|------|------|
