@@ -69,18 +69,18 @@ from transturing.core.isa import (
     Instruction,
     Trace,
     TraceStep,
-    _clz32,
-    _ctz32,
-    _popcnt32,
-    _rotl32,
-    _rotr32,
-    _shr_s,
-    _shr_u,
-    _sign_extend_8,
-    _sign_extend_16,
-    _to_i32,
-    _trunc_div,
-    _trunc_rem,
+    clz32,
+    ctz32,
+    popcnt32,
+    rotl32,
+    rotr32,
+    shr_s,
+    shr_u,
+    sign_extend_8,
+    sign_extend_16,
+    to_i32,
+    trunc_div,
+    trunc_rem,
 )
 from transturing.core.registry import register_backend
 
@@ -96,7 +96,7 @@ class NumPyExecutor(ExecutorBackend):
     local eps=1e-10 for recency bias.
     """
 
-    name = "numpy"
+    name: str = "numpy"
 
     def execute(  # noqa: C901, PLR0912, PLR0915
         self,
@@ -106,23 +106,25 @@ class NumPyExecutor(ExecutorBackend):
         """Execute a program and return the execution trace."""
         trace = Trace(program=prog)
 
-        stack_keys = []
-        stack_vals = []
+        stack_keys: list[tuple[float, float]] = []
+        stack_vals: list[int] = []
         write_count = 0
         eps = 1e-10
 
         # Local variables address space (separate from stack)
-        locals_keys = []
-        locals_vals = []
+        locals_keys: list[tuple[float, float]] = []
+        locals_vals: list[int] = []
         local_write_count = 0
 
         # Heap (linear memory) address space
-        heap_keys = []
-        heap_vals = []
+        heap_keys: list[tuple[float, float]] = []
+        heap_vals: list[int] = []
         heap_write_count = 0
 
         # Call stack
-        call_stack = []  # list of (ret_addr, saved_sp, saved_locals_base)
+        call_stack: list[
+            tuple[int, int, int]
+        ] = []  # list of (ret_addr, saved_sp, saved_locals_base)
         locals_base = 0
 
         ip = 0
@@ -255,7 +257,7 @@ class NumPyExecutor(ExecutorBackend):
                     trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
                     break
                 val_b = stack_read(sp - 1)
-                result = _trunc_div(val_b, val_a) & MASK32
+                result = trunc_div(val_b, val_a) & MASK32
                 sp -= 1
                 stack_write(sp, result)
                 top = result
@@ -265,7 +267,7 @@ class NumPyExecutor(ExecutorBackend):
                     trace.steps.append(TraceStep(OP_TRAP, 0, sp, 0))
                     break
                 val_b = stack_read(sp - 1)
-                result = _trunc_rem(val_b, val_a) & MASK32
+                result = trunc_rem(val_b, val_a) & MASK32
                 sp -= 1
                 stack_write(sp, result)
                 top = result
@@ -302,6 +304,8 @@ class NumPyExecutor(ExecutorBackend):
                     result = 1 if val_b <= val_a else 0
                 elif op in (OP_GE_S, OP_GE_U):
                     result = 1 if val_b >= val_a else 0
+                else:
+                    result = 0
                 sp -= 1
                 stack_write(sp, result)
                 top = result
@@ -310,56 +314,56 @@ class NumPyExecutor(ExecutorBackend):
             elif op == OP_AND:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _to_i32(val_a) & _to_i32(val_b)
+                result = to_i32(val_a) & to_i32(val_b)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_OR:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _to_i32(val_a) | _to_i32(val_b)
+                result = to_i32(val_a) | to_i32(val_b)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_XOR:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _to_i32(val_a) ^ _to_i32(val_b)
+                result = to_i32(val_a) ^ to_i32(val_b)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_SHL:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = (_to_i32(val_b) << (int(val_a) & 31)) & MASK32
+                result = (to_i32(val_b) << (int(val_a) & 31)) & MASK32
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_SHR_S:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _shr_s(val_b, val_a)
+                result = shr_s(val_b, val_a)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_SHR_U:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _shr_u(val_b, val_a)
+                result = shr_u(val_b, val_a)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_ROTL:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _rotl32(val_b, val_a)
+                result = rotl32(val_b, val_a)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
             elif op == OP_ROTR:
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                result = _rotr32(val_b, val_a)
+                result = rotr32(val_b, val_a)
                 sp -= 1
                 stack_write(sp, result)
                 top = result
@@ -367,17 +371,17 @@ class NumPyExecutor(ExecutorBackend):
             # ── Phase 14 Chunk 4: unary + parametric ops ──
             elif op == OP_CLZ:
                 val_a = stack_read(sp)
-                result = _clz32(val_a)
+                result = clz32(val_a)
                 stack_write(sp, result)
                 top = result
             elif op == OP_CTZ:
                 val_a = stack_read(sp)
-                result = _ctz32(val_a)
+                result = ctz32(val_a)
                 stack_write(sp, result)
                 top = result
             elif op == OP_POPCNT:
                 val_a = stack_read(sp)
-                result = _popcnt32(val_a)
+                result = popcnt32(val_a)
                 stack_write(sp, result)
                 top = result
             elif op == OP_ABS:
@@ -436,7 +440,7 @@ class NumPyExecutor(ExecutorBackend):
             elif op == OP_I32_LOAD8_S:
                 addr = stack_read(sp)
                 val = heap_read(int(addr))
-                result = _sign_extend_8(val)
+                result = sign_extend_8(val)
                 stack_write(sp, result)
                 top = result
             elif op == OP_I32_LOAD16_U:
@@ -448,7 +452,7 @@ class NumPyExecutor(ExecutorBackend):
             elif op == OP_I32_LOAD16_S:
                 addr = stack_read(sp)
                 val = heap_read(int(addr))
-                result = _sign_extend_16(val)
+                result = sign_extend_16(val)
                 stack_write(sp, result)
                 top = result
             elif op == OP_I32_STORE8:

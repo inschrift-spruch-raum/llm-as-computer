@@ -19,6 +19,8 @@ References:
 
 """
 
+from __future__ import annotations
+
 import re
 import shutil
 import subprocess
@@ -30,7 +32,7 @@ from .wat_parser import parse_wat
 
 # ─── Unsupported WASM features ────────────────────────────────────
 
-_UNSUPPORTED_PATTERNS = [
+_UNSUPPORTED_PATTERNS: list[tuple[str, str]] = [
     # 64-bit integer ops
     (r"\bi64\.\w+", "i64 (64-bit integer) operations"),
     # Floating point
@@ -54,7 +56,7 @@ _UNSUPPORTED_PATTERNS = [
 _MAX_EXAMPLES = 3
 
 
-def _check_toolchain() -> dict:
+def _check_toolchain() -> dict[str, str | None]:
     """
     Check availability of required external tools.
 
@@ -81,9 +83,9 @@ def _check_unsupported_features(wat_text: str) -> list[str]:
     Returns list of human-readable error messages for each unsupported
     feature found.
     """
-    errors = []
+    errors: list[str] = []
     for pattern, desc in _UNSUPPORTED_PATTERNS:
-        matches = re.findall(pattern, wat_text)
+        matches: list[str] = re.findall(pattern, wat_text)
         if matches:
             # Deduplicate
             unique = sorted(set(matches))
@@ -204,8 +206,10 @@ def compile_c_to_wat(
         EnvironmentError: If required tools are not installed.
 
     """
-    tools = _check_toolchain()
-    if not tools["clang"]:
+    tools: dict[str, str | None] = _check_toolchain()
+    clang_path = tools["clang"]
+    wasm2wat_path = tools["wasm2wat"]
+    if not clang_path:
         msg = (
             "clang not found. Install with: apt install clang lld\n"
             "clang must support --target=wasm32-unknown-unknown"
@@ -213,7 +217,7 @@ def compile_c_to_wat(
         raise OSError(
             msg,
         )
-    if not tools["wasm2wat"]:
+    if not wasm2wat_path:
         msg = (
             "wasm2wat not found. Install with: apt install wabt\n"
             "Or download from https://github.com/WebAssembly/wabt/releases"
@@ -230,8 +234,8 @@ def compile_c_to_wat(
             f.write(source)
 
         # C → WASM via clang
-        clang_cmd = [
-            tools["clang"],
+        clang_cmd: list[str | Path] = [
+            clang_path,
             "--target=wasm32-unknown-unknown",
             "-nostdlib",
             "-Wl,--no-entry",
@@ -259,7 +263,7 @@ def compile_c_to_wat(
 
         # WASM → WAT via wasm2wat
         result = subprocess.run(  # noqa: S603, PLW1510
-            [tools["wasm2wat"], wasm_path],
+            [wasm2wat_path, wasm_path],
             capture_output=True,
             text=True,
             timeout=10,
@@ -354,7 +358,7 @@ def compile_c(
         from .isa import program as make_prog  # noqa: PLC0415
 
         # Initialize any extra locals to 0 (WASM semantics: locals default to 0)
-        init_instrs = []
+        init_instrs: list[tuple[str, int]] = []
         for i in range(n_locals):
             init_instrs.extend([("PUSH", 0), ("LOCAL.SET", n_params + i)])
         # Pop args from stack into locals (reverse order: top of stack = last param)
@@ -380,7 +384,7 @@ def _offset_jumps(
     from .isa import OP_JNZ, OP_JZ  # noqa: PLC0415
 
     offset = len(prefix)
-    adjusted = []
+    adjusted: list[Instruction] = []
     for instr in body:
         if instr.op in (OP_JZ, OP_JNZ):
             adjusted.append(Instruction(instr.op, instr.arg + offset))
@@ -477,7 +481,7 @@ def main() -> None:  # noqa: PLR0915
     import sys  # noqa: PLC0415
 
     if not _has_toolchain():
-        tools = _check_toolchain()
+        tools: dict[str, str | None] = _check_toolchain()
         [k for k, v in tools.items() if v is None]
         sys.exit(0)
 

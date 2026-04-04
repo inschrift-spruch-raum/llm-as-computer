@@ -43,6 +43,8 @@ References
 
 """
 
+from __future__ import annotations
+
 from .isa import (
     OP_DUP,
     OP_EQ,
@@ -51,13 +53,14 @@ from .isa import (
     OP_POP,
     OP_PUSH,
     Instruction,
+    WasmInstr,
 )
 from .isa import (
     program as _flat,
 )
 
 
-def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # noqa: C901, PLR0912, PLR0915
+def compile_structured(wasm_instrs: list[WasmInstr]) -> list[Instruction]:  # noqa: C901, PLR0912, PLR0915
     """
     Compile structured WASM-style instructions to flat Instruction list.
 
@@ -90,10 +93,14 @@ def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # 
         # Flat: PUSH 5; PUSH 1; JNZ 6; PUSH 99; HALT
 
     """
-    flat = []  # growing list of Instruction
-    lbl_stack = []  # control-flow frames (dicts) pushed by BLOCK/LOOP/IF
-    pending = {}  # label_id -> [flat-indices of JNZ/JZ to backpatch]
-    _nxt = [0]  # mutable counter for label IDs
+    flat: list[Instruction] = []  # growing list of Instruction
+    lbl_stack: list[
+        dict[str, int | str]
+    ] = []  # control-flow frames (dicts) pushed by BLOCK/LOOP/IF
+    pending: dict[
+        int, list[int]
+    ] = {}  # label_id -> [flat-indices of JNZ/JZ to backpatch]
+    _nxt: list[int] = [0]  # mutable counter for label IDs
 
     # ── label helpers ────────────────────────────────────────────────
 
@@ -125,7 +132,7 @@ def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # 
         flat.append(Instruction(OP_PUSH, 1))
         flat.append(Instruction(OP_JNZ, addr))
 
-    def _blk(n: int) -> dict[str, object]:
+    def _blk(n: int) -> dict[str, int | str]:
         """Return the n-th enclosing frame (0 = innermost)."""
         idx = len(lbl_stack) - 1 - n
         if idx < 0:
@@ -138,7 +145,7 @@ def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # 
             )
         return lbl_stack[idx]
 
-    def _jump_to_blk(blk: dict[str, object]) -> None:
+    def _jump_to_blk(blk: dict[str, int | str]) -> None:
         """
         Emit a jump (unconditional) to the natural target of blk.
 
@@ -146,26 +153,21 @@ def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # 
         For BLOCK/IF: jump to end (forward, pending label).
         """
         if blk["kind"] == "loop":
-            _jump_addr(blk["start"])
+            _jump_addr(int(blk["start"]))
         else:
-            _jump_fwd(blk["end"])
+            _jump_fwd(int(blk["end"]))
 
-    def _jcc_to_blk(op: int, blk: dict[str, object]) -> None:
+    def _jcc_to_blk(op: int, blk: dict[str, int | str]) -> None:
         """Emit a conditional jump (op) to the natural target of blk."""
         if blk["kind"] == "loop":
-            flat.append(Instruction(op, blk["start"]))
+            flat.append(Instruction(op, int(blk["start"])))
         else:
-            _jcc_fwd(op, blk["end"])
+            _jcc_fwd(op, int(blk["end"]))
 
     # ── main compilation loop ─────────────────────────────────────────
 
     for raw in wasm_instrs:
-        if not isinstance(raw, (list, tuple)):
-            msg = f"Expected tuple/list instruction, got {type(raw).__name__}: {raw!r}"
-            raise TypeError(
-                msg,
-            )
-        name = raw[0].upper() if isinstance(raw[0], str) else raw[0]
+        name = raw[0].upper()
 
         if name == "BLOCK":
             lbl_stack.append({"kind": "block", "end": _alloc()})
@@ -189,25 +191,38 @@ def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # 
             if blk["kind"] != "if":
                 msg = f"ELSE without matching IF (found {blk['kind']!r})"
                 raise ValueError(msg)
-            _jump_fwd(blk["end"])  # then-branch skips else-body
-            _resolve(blk["else"])  # else-body starts here
+            _jump_fwd(int(blk["end"]))  # then-branch skips else-body
+            _resolve(int(blk["else"]))  # else-body starts here
 
         elif name == "END":
             blk = lbl_stack.pop()
-            if blk["kind"] == "if" and blk["else"] in pending:
-                _resolve(blk["else"])
-            _resolve(blk["end"])
+            if blk["kind"] == "if" and int(blk["else"]) in pending:
+                _resolve(int(blk["else"]))
+            _resolve(int(blk["end"]))
 
         elif name == "BR":
+            if len(raw) != 2:  # noqa: PLR2004
+                msg = f"BR requires (name, depth), got {len(raw)} elements"
+                raise ValueError(msg)
             n = raw[1]
             _jump_to_blk(_blk(n))
 
         elif name == "BR_IF":
+            if len(raw) != 2:  # noqa: PLR2004
+                msg = f"BR_IF requires (name, depth), got {len(raw)} elements"
+                raise ValueError(msg)
             n = raw[1]
             _jcc_to_blk(OP_JNZ, _blk(n))
 
         elif name == "BR_TABLE":
-            labels, default_depth = raw[1], raw[2]
+            if len(raw) != 3:  # noqa: PLR2004
+                msg = (
+                    f"BR_TABLE requires (name, labels, default),"
+                    f" got {len(raw)} elements"
+                )
+                raise ValueError(msg)
+            labels: list[int] = raw[1]
+            default_depth: int = raw[2]
             n_cases = len(labels)
 
             # Allocate a handler label for every case.

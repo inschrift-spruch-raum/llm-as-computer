@@ -12,11 +12,7 @@ class ExecutorBackend(ABC):
     Both NumPyExecutor and TorchExecutor implement this interface.
     """
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Backend identifier, e.g. 'numpy' or 'torch'."""
-        ...
+    name: str  # Class-level constant identifying the backend (e.g. 'numpy', 'torch')
 
     @abstractmethod
     def execute(self, prog: list[Instruction], max_steps: int = 50000) -> Trace:

@@ -129,15 +129,34 @@ uv sync
 # Install with dev tools
 uv sync --group dev
 
-# Run tests
-uv run pytest tests/ -v
+# Type check
+uv run basedpyright src/ tests/
 
 # Lint
 uv run ruff check .
 
+# Run tests
+uv run pytest tests/ -v
+
 # Verify lockfile integrity
 uv sync --locked
 ```
+
+### MANDATORY: Verification After Every Change
+
+**Priority: Agent built-in checks FIRST, project commands as fallback.**
+
+Agents (e.g. `deep`, `quick`, delegated subagents) have their own verification workflows — `lsp_diagnostics`, build checks, test runs, etc. **Always prefer the agent's built-in checking system.** It is faster, context-aware, and already integrated into the agent's workflow.
+
+Only when the agent's built-in checks are insufficient or produce unexpected results should you fall back to the full project verification below.
+
+**Full project verification (fallback):**
+
+1. **`uv run basedpyright src/ tests/`** — 0 errors, 0 warnings, 0 notes
+2. **`uv run ruff check .`** — All checks passed
+3. **`uv run pytest tests/ -v`** — All tests passed
+
+No task is complete until verification (agent-built-in or full project) passes with zero errors.
 
 ## NOTES
 

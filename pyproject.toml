@@ -31,7 +31,7 @@ dev = [
     "transturing[all]",
     "pytest>=9.0.2",
     "ruff>=0.8",
-    "pyright>=1.1.408",
+    "basedpyright>=1.39.0",
 ]
 
 [build-system]
@@ -44,3 +44,8 @@ testpaths = ["tests"]
 [tool.ruff]
 lint.extend-select = ["ALL"]
 lint.ignore = ["COM812", "D203", "D212"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+exclude = ["**/.venv", "**/node_modules", "**/__pycache__", "**/.*"]

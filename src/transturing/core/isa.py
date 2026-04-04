@@ -6,7 +6,7 @@ Core, zero-dependency module containing:
   - Constants: D_MODEL, N_OPCODES, MASK32, TOKENS_PER_STEP, all DIM_* layout
   - Opcodes: OP_PUSH through OP_SELECT, OP_TRAP
   - Maps: OP_NAMES, OPCODE_DIM_MAP, OPCODE_IDX, NONLINEAR_OPS
-  - Math helpers: _trunc_div, _trunc_rem, bitwise ops
+  - Math helpers: trunc_div, trunc_rem, bitwise ops
   - Test utilities: compare_traces, test_algorithm, test_trap_algorithm
   - Program builder: program()
 
@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from .abc import ExecutorBackend
 
 # ─── Types ──────────────────────────────────────────────────────────
+
+type WasmInstr = tuple[str] | tuple[str, int] | tuple[str, list[int], int]
 
 
 @dataclass
@@ -48,10 +50,10 @@ class Instruction:
         return name
 
 
-def program(*instrs: Instruction | tuple) -> list[Instruction]:
+def program(*instrs: Instruction | WasmInstr) -> list[Instruction]:
     """Build a program from instruction tuples or Instruction objects."""
-    result = []
-    _name_to_op = {
+    result: list[Instruction] = []
+    _name_to_op: dict[str, int] = {
         "PUSH": 1,
         "POP": 2,
         "ADD": 3,
@@ -113,7 +115,14 @@ def program(*instrs: Instruction | tuple) -> list[Instruction]:
             result.append(instr)
             continue
         name = instr[0].upper()
-        arg = instr[1] if len(instr) > 1 else 0
+        # Handle three WasmInstr shapes: (op,), (op, arg), (op, labels, default)
+        if len(instr) == 3:  # noqa: PLR2004
+            # BR_TABLE shape: ("BR_TABLE", [labels...], default)
+            arg = instr[2]
+        elif len(instr) == 2:  # noqa: PLR2004
+            arg = instr[1]
+        else:
+            arg = 0
         op = _name_to_op[name]
         result.append(Instruction(op, arg))
     return result
@@ -142,7 +151,7 @@ class Trace:
 
     def format_trace(self) -> str:
         """Human-readable trace."""
-        lines = []
+        lines: list[str] = []
         lines.append(f"Program: {' ; '.join(str(i) for i in self.program)}")
         lines.append(f"{'Step':>4}  {'Instruction':<10} {'SP':>3}  {'TOP':>5}")
         lines.append("-" * 35)
@@ -514,29 +523,29 @@ NONLINEAR_OPS = {
 MASK32 = 0xFFFFFFFF
 
 
-def _trunc_div(b: int, a: int) -> int:
+def trunc_div(b: int, a: int) -> int:
     """Signed integer division truncating toward zero (WASM semantics)."""
     return int(b / a)
 
 
-def _trunc_rem(b: int, a: int) -> int:
+def trunc_rem(b: int, a: int) -> int:
     """Signed remainder matching truncated division: b - trunc(b/a)*a."""
-    return b - _trunc_div(b, a) * a
+    return b - trunc_div(b, a) * a
 
 
-def _to_i32(val: int) -> int:
+def to_i32(val: int) -> int:
     """Cast to 32-bit signed integer from potentially float stack value."""
     return int(val) & MASK32
 
 
-def _shr_u(b: int, a: int) -> int:
+def shr_u(b: int, a: int) -> int:
     """Logical (unsigned) right shift of b by a positions."""
-    return _to_i32(b) >> (int(a) & 31)
+    return to_i32(b) >> (int(a) & 31)
 
 
-def _shr_s(b: int, a: int) -> int:
+def shr_s(b: int, a: int) -> int:
     """Arithmetic (signed) right shift of b by a positions."""
-    val = _to_i32(b)
+    val = to_i32(b)
     if val >= 0x80000000:  # noqa: PLR2004
         val -= 0x100000000
     shift = int(a) & 31
@@ -544,23 +553,23 @@ def _shr_s(b: int, a: int) -> int:
     return result & MASK32 if result < 0 else result
 
 
-def _rotl32(b: int, a: int) -> int:
+def rotl32(b: int, a: int) -> int:
     """Left-rotate b by a positions within 32-bit word."""
-    val = _to_i32(b)
+    val = to_i32(b)
     shift = int(a) & 31
     return ((val << shift) | (val >> (32 - shift))) & MASK32 if shift else val
 
 
-def _rotr32(b: int, a: int) -> int:
+def rotr32(b: int, a: int) -> int:
     """Right-rotate b by a positions within 32-bit word."""
-    val = _to_i32(b)
+    val = to_i32(b)
     shift = int(a) & 31
     return ((val >> shift) | (val << (32 - shift))) & MASK32 if shift else val
 
 
-def _clz32(val: int) -> int:
+def clz32(val: int) -> int:
     """Count leading zeros in 32-bit representation."""
-    v = _to_i32(val)
+    v = to_i32(val)
     if v == 0:
         return 32
     n = 0
@@ -581,9 +590,9 @@ def _clz32(val: int) -> int:
     return n
 
 
-def _ctz32(val: int) -> int:
+def ctz32(val: int) -> int:
     """Count trailing zeros in 32-bit representation."""
-    v = _to_i32(val)
+    v = to_i32(val)
     if v == 0:
         return 32
     n = 0
@@ -604,18 +613,18 @@ def _ctz32(val: int) -> int:
     return n
 
 
-def _popcnt32(val: int) -> int:
+def popcnt32(val: int) -> int:
     """Count set bits in 32-bit representation."""
-    return _to_i32(val).bit_count()
+    return to_i32(val).bit_count()
 
 
-def _sign_extend_8(val: int) -> int:
+def sign_extend_8(val: int) -> int:
     """Sign-extend an 8-bit value to a signed integer."""
     v = int(val) & 0xFF
     return v - 0x100 if v >= 0x80 else v  # noqa: PLR2004
 
 
-def _sign_extend_16(val: int) -> int:
+def sign_extend_16(val: int) -> int:
     """Sign-extend a 16-bit value to a signed integer."""
     v = int(val) & 0xFFFF
     return v - 0x10000 if v >= 0x8000 else v  # noqa: PLR2004
@@ -685,10 +694,10 @@ def test_trap_algorithm(
     np_trace = np_exec.execute(prog)
     pt_trace = pt_exec.execute(prog)
 
-    np_trapped = np_trace.steps and np_trace.steps[-1].op == OP_TRAP
-    pt_trapped = pt_trace.steps and pt_trace.steps[-1].op == OP_TRAP
+    np_trapped: bool = len(np_trace.steps) > 0 and np_trace.steps[-1].op == OP_TRAP
+    pt_trapped: bool = len(pt_trace.steps) > 0 and pt_trace.steps[-1].op == OP_TRAP
     match, detail = compare_traces(np_trace, pt_trace)
-    all_ok = np_trapped and pt_trapped and match
+    all_ok: bool = np_trapped and pt_trapped and match
 
     status = "PASS" if all_ok else "FAIL"
     np_label = (

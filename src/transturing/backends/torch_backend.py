@@ -104,18 +104,18 @@ from transturing.core.isa import (
     Instruction,
     Trace,
     TraceStep,
-    _clz32,
-    _ctz32,
-    _popcnt32,
-    _rotl32,
-    _rotr32,
-    _shr_s,
-    _shr_u,
-    _sign_extend_8,
-    _sign_extend_16,
-    _to_i32,
-    _trunc_div,
-    _trunc_rem,
+    clz32,
+    ctz32,
+    popcnt32,
+    rotl32,
+    rotr32,
+    shr_s,
+    shr_u,
+    sign_extend_8,
+    sign_extend_16,
+    to_i32,
+    trunc_div,
+    trunc_rem,
 )
 from transturing.core.registry import register_backend
 
@@ -213,8 +213,8 @@ class TokenVocab:
 
     def __init__(self) -> None:
         """Initialize token vocabulary mapping."""
-        self._opcode_to_tid = {}
-        self._tid_to_opcode = {}
+        self._opcode_to_tid: dict[int, int] = {}
+        self._tid_to_opcode: dict[int, int] = {}
         for op_code, idx in OPCODE_IDX.items():
             tid = self._OPCODE_BASE + idx
             self._opcode_to_tid[op_code] = tid
@@ -226,7 +226,7 @@ class TokenVocab:
 
     _MAX_BYTE_VALUE: ClassVar[int] = 255
 
-    def encode(self, token: str | tuple[str, int]) -> int:  # noqa: C901
+    def encode(self, token: str | tuple[str, int | str]) -> int:  # noqa: C901, PLR0912
         """Encode a token to its vocabulary ID."""
         if isinstance(token, str):
             if token in self._SPECIAL_IDS:
@@ -235,29 +235,38 @@ class TokenVocab:
             raise ValueError(msg)
         tag, val = token
         if tag == self.OPCODE:
+            if not isinstance(val, int):
+                msg = f"Opcode value must be int, got {type(val).__name__}"
+                raise ValueError(msg)
             if val not in self._opcode_to_tid:
                 msg = f"Unknown opcode: {val}"
                 raise ValueError(msg)
             return self._opcode_to_tid[val]
         if tag == self.VALUE:
+            if not isinstance(val, int):
+                msg = f"Value must be int, got {type(val).__name__}"
+                raise ValueError(msg)
             if not (0 <= val <= self._MAX_BYTE_VALUE):
                 msg = f"Value out of byte range: {val}"
                 raise ValueError(msg)
             return self._VALUE_BASE + val
         if tag == self.SP_DELTA:
+            if not isinstance(val, int):
+                msg = f"SP delta must be int, got {type(val).__name__}"
+                raise ValueError(msg)
             if not (self._SP_DELTA_MIN <= val <= self._SP_DELTA_MAX):
                 msg = f"SP delta {val} out of range"
                 raise ValueError(msg)
             return self._SP_DELTA_BASE + (val - self._SP_DELTA_MIN)
         if tag == self.SPECIAL:
-            if val in self._SPECIAL_IDS:
+            if isinstance(val, str) and val in self._SPECIAL_IDS:
                 return self._SPECIAL_IDS[val]
             msg = f"Unknown special token: {val!r}"
             raise ValueError(msg)
         msg = f"Unknown token tag: {tag!r}"
         raise ValueError(msg)
 
-    def decode(self, tid: int) -> tuple[str, int]:
+    def decode(self, tid: int) -> tuple[str, int | str]:
         """Decode a token ID back to its structured representation."""
         if not (0 <= tid < self.vocab_size):
             msg = f"Token ID {tid} out of range"
@@ -317,6 +326,7 @@ class TokenVocab:
             d_model = D_MODEL
         if embedding is None:
             embedding = self.compile_embedding(d_model)
+        assert embedding is not None  # noqa: S101 - type narrowing after assignment
         e = embedding.weight.data
         unembed = nn.Linear(d_model, self.vocab_size, bias=True)
         norms_sq = (e * e).sum(dim=1)
@@ -332,7 +342,8 @@ class TokenVocab:
         """Return human-readable name for a token ID."""
         tag, val = self.decode(tid)
         if tag == self.SPECIAL:
-            return val
+            return str(val)
+        assert isinstance(val, int)  # noqa: S101 - type narrowing after tag check
         if tag == self.OPCODE:
             return self.opcode_name(val)
         if tag == self.VALUE:
@@ -435,6 +446,9 @@ def embed_state(ip: int, sp: int) -> torch.Tensor:
 
 class CompiledModel(nn.Module):
     """Compiled transformer with 10 attention heads and linear+nonlinear FF dispatch."""
+
+    M_top: torch.Tensor
+    sp_deltas: torch.Tensor
 
     def __init__(self, d_model: int = D_MODEL) -> None:
         """Initialize compiled transformer model."""
@@ -732,6 +746,9 @@ class CompiledModel(nn.Module):
             heap_embs = torch.zeros(0, self.d_model, dtype=DTYPE)
         if call_embs is None:
             call_embs = torch.zeros(0, self.d_model, dtype=DTYPE)
+        assert stack_embs is not None  # noqa: S101
+        assert local_embs is not None  # noqa: S101
+        assert heap_embs is not None  # noqa: S101
 
         opcode_val, _, _ = self.head_prog_op(query_emb, prog_embs)
         arg_val, _, _ = self.head_prog_arg(query_emb, prog_embs)
@@ -841,10 +858,10 @@ class CompiledModel(nn.Module):
         nonlinear[OPCODE_IDX[OP_SUB]] = float((vb - va) & MASK32)
         nonlinear[OPCODE_IDX[OP_MUL]] = float((va * vb) & MASK32)
         if va != 0:
-            nonlinear[OPCODE_IDX[OP_DIV_S]] = float(_trunc_div(vb, va) & MASK32)
-            nonlinear[OPCODE_IDX[OP_DIV_U]] = float(_trunc_div(vb, va) & MASK32)
-            nonlinear[OPCODE_IDX[OP_REM_S]] = float(_trunc_rem(vb, va) & MASK32)
-            nonlinear[OPCODE_IDX[OP_REM_U]] = float(_trunc_rem(vb, va) & MASK32)
+            nonlinear[OPCODE_IDX[OP_DIV_S]] = float(trunc_div(vb, va) & MASK32)
+            nonlinear[OPCODE_IDX[OP_DIV_U]] = float(trunc_div(vb, va) & MASK32)
+            nonlinear[OPCODE_IDX[OP_REM_S]] = float(trunc_rem(vb, va) & MASK32)
+            nonlinear[OPCODE_IDX[OP_REM_U]] = float(trunc_rem(vb, va) & MASK32)
 
         nonlinear[OPCODE_IDX[OP_EQZ]] = 1.0 if va == 0 else 0.0
         nonlinear[OPCODE_IDX[OP_EQ]] = 1.0 if va == vb else 0.0
@@ -857,17 +874,17 @@ class CompiledModel(nn.Module):
         nonlinear[OPCODE_IDX[OP_LE_U]] = 1.0 if vb <= va else 0.0
         nonlinear[OPCODE_IDX[OP_GE_S]] = 1.0 if vb >= va else 0.0
         nonlinear[OPCODE_IDX[OP_GE_U]] = 1.0 if vb >= va else 0.0
-        nonlinear[OPCODE_IDX[OP_AND]] = float(_to_i32(va) & _to_i32(vb))
-        nonlinear[OPCODE_IDX[OP_OR]] = float(_to_i32(va) | _to_i32(vb))
-        nonlinear[OPCODE_IDX[OP_XOR]] = float(_to_i32(va) ^ _to_i32(vb))
-        nonlinear[OPCODE_IDX[OP_SHL]] = float((_to_i32(vb) << (int(va) & 31)) & MASK32)
-        nonlinear[OPCODE_IDX[OP_SHR_S]] = float(_shr_s(vb, va))
-        nonlinear[OPCODE_IDX[OP_SHR_U]] = float(_shr_u(vb, va))
-        nonlinear[OPCODE_IDX[OP_ROTL]] = float(_rotl32(vb, va))
-        nonlinear[OPCODE_IDX[OP_ROTR]] = float(_rotr32(vb, va))
-        nonlinear[OPCODE_IDX[OP_CLZ]] = float(_clz32(va))
-        nonlinear[OPCODE_IDX[OP_CTZ]] = float(_ctz32(va))
-        nonlinear[OPCODE_IDX[OP_POPCNT]] = float(_popcnt32(va))
+        nonlinear[OPCODE_IDX[OP_AND]] = float(to_i32(va) & to_i32(vb))
+        nonlinear[OPCODE_IDX[OP_OR]] = float(to_i32(va) | to_i32(vb))
+        nonlinear[OPCODE_IDX[OP_XOR]] = float(to_i32(va) ^ to_i32(vb))
+        nonlinear[OPCODE_IDX[OP_SHL]] = float((to_i32(vb) << (int(va) & 31)) & MASK32)
+        nonlinear[OPCODE_IDX[OP_SHR_S]] = float(shr_s(vb, va))
+        nonlinear[OPCODE_IDX[OP_SHR_U]] = float(shr_u(vb, va))
+        nonlinear[OPCODE_IDX[OP_ROTL]] = float(rotl32(vb, va))
+        nonlinear[OPCODE_IDX[OP_ROTR]] = float(rotr32(vb, va))
+        nonlinear[OPCODE_IDX[OP_CLZ]] = float(clz32(va))
+        nonlinear[OPCODE_IDX[OP_CTZ]] = float(ctz32(va))
+        nonlinear[OPCODE_IDX[OP_POPCNT]] = float(popcnt32(va))
         nonlinear[OPCODE_IDX[OP_ABS]] = float(abs(int(va)))
         nonlinear[OPCODE_IDX[OP_NEG]] = float((-int(va)) & MASK32)
 
@@ -876,9 +893,9 @@ class CompiledModel(nn.Module):
 
         hv = round(heap_val.item())
         nonlinear[OPCODE_IDX[OP_I32_LOAD8_U]] = float(int(hv) & 0xFF)
-        nonlinear[OPCODE_IDX[OP_I32_LOAD8_S]] = float(_sign_extend_8(hv))
+        nonlinear[OPCODE_IDX[OP_I32_LOAD8_S]] = float(sign_extend_8(hv))
         nonlinear[OPCODE_IDX[OP_I32_LOAD16_U]] = float(int(hv) & 0xFFFF)
-        nonlinear[OPCODE_IDX[OP_I32_LOAD16_S]] = float(_sign_extend_16(hv))
+        nonlinear[OPCODE_IDX[OP_I32_LOAD16_S]] = float(sign_extend_16(hv))
 
         top_nonlinear = (opcode_one_hot * nonlinear).sum()
         top = top_linear + top_nonlinear
@@ -905,7 +922,7 @@ class CompiledModel(nn.Module):
 class TorchExecutor(ExecutorBackend):
     """Executes programs using CompiledModel."""
 
-    name = "torch"
+    name: str = "torch"
 
     def __init__(self, model: CompiledModel | None = None) -> None:
         """Initialize with optional compiled model."""
@@ -920,15 +937,15 @@ class TorchExecutor(ExecutorBackend):
             [embed_program_token(i, instr) for i, instr in enumerate(prog)],
         )
 
-        stack_embs_list = []
-        local_embs_list = []
-        heap_embs_list = []
-        call_embs_list = []
+        stack_embs_list: list[torch.Tensor] = []
+        local_embs_list: list[torch.Tensor] = []
+        heap_embs_list: list[torch.Tensor] = []
+        call_embs_list: list[torch.Tensor] = []
         write_count = 0
         local_write_count = 0
         heap_write_count = 0
         call_write_count = 0
-        call_stack = []
+        call_stack: list[tuple[int, int, int]] = []
         locals_base = 0
         ip = 0
         sp = 0

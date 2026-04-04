@@ -347,7 +347,7 @@ WAT_BITWISE = """
 @pytest.mark.parametrize(
     ("test_name", "test_fn"),
     ALL_TESTS,
-    ids=lambda x: x[0] if isinstance(x, tuple) else str(x),
+    ids=[name for name, _fn in ALL_TESTS],
 )
 def test_phase4_wat_trace_equivalence(
     executor: NumPyExecutor,

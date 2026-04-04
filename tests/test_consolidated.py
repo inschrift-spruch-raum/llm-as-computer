@@ -174,7 +174,7 @@ def _phase13_algos_consistency() -> list[tuple[str, list[Instruction], int]]:
     ]
 
 
-def _phase14_arith() -> list[tuple[str, list[Instruction], int]]:
+def _phase14_arith() -> list[tuple[str, list[Instruction], int | None]]:
     """Phase 14 arithmetic tests."""
     return [
         ("native_mul(7,8)", *make_native_multiply(7, 8)),
@@ -414,7 +414,7 @@ def test_numpy_phase14_arith(
     np_exec: NumPyExecutor,
     _name: str,
     prog: list[Instruction],
-    expected: int,
+    expected: int | None,
 ) -> None:
     """Verify NumPy executor produces correct Phase 14 arithmetic."""
     trace = np_exec.execute(prog)

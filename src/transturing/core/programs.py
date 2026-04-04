@@ -6,6 +6,7 @@ generators and the ALL_TESTS regression list.
 """
 
 import math
+from typing import TYPE_CHECKING
 
 from .isa import (
     MASK32,
@@ -50,18 +51,21 @@ from .isa import (
     OP_SWAP,
     OP_XOR,
     Instruction,
-    _clz32,
-    _ctz32,
-    _popcnt32,
-    _rotl32,
-    _rotr32,
-    _shr_s,
-    _shr_u,
-    _to_i32,
-    _trunc_div,
-    _trunc_rem,
+    clz32,
+    ctz32,
+    popcnt32,
     program,
+    rotl32,
+    rotr32,
+    shr_s,
+    shr_u,
+    to_i32,
+    trunc_div,
+    trunc_rem,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # ─── Phase 4 Test Programs ──────────────────────────────────────
 
@@ -348,7 +352,7 @@ def make_native_divmod(a: int, b: int) -> tuple[list[Instruction], int | None]:
         Instruction(OP_PUSH, a),
         Instruction(OP_DIV_S),
         Instruction(OP_HALT),
-    ], _trunc_div(b, a)
+    ], trunc_div(b, a)
 
 
 def make_native_remainder(a: int, b: int) -> tuple[list[Instruction], int | None]:
@@ -365,7 +369,7 @@ def make_native_remainder(a: int, b: int) -> tuple[list[Instruction], int | None
         Instruction(OP_PUSH, a),
         Instruction(OP_REM_S),
         Instruction(OP_HALT),
-    ], _trunc_rem(b, a)
+    ], trunc_rem(b, a)
 
 
 def make_native_is_even(n: int) -> tuple[list[Instruction], int]:
@@ -450,7 +454,7 @@ def make_compare_eqz(a: int) -> tuple[list[Instruction], int]:
 
 def make_compare_binary(op: int, a: int, b: int) -> tuple[list[Instruction], int]:
     """Perform a generic binary comparison: PUSH a, PUSH b, OP, HALT."""
-    cmp_semantics = {
+    cmp_semantics: dict[int, Callable[[int, int], bool]] = {
         OP_EQ: lambda va, vb: vb == va,
         OP_NE: lambda va, vb: vb != va,
         OP_LT_S: lambda va, vb: vb < va,
@@ -539,15 +543,15 @@ def make_native_clamp(val: int, lo: int, hi: int) -> tuple[list[Instruction], in
 def make_bitwise_binary(op: int, a: int, b: int) -> tuple[list[Instruction], int]:
     """Perform a generic bitwise binary operation: PUSH a, PUSH b, OP, HALT."""
     va, vb = b, a
-    bitwise_semantics = {
-        OP_AND: lambda va, vb: _to_i32(va) & _to_i32(vb),
-        OP_OR: lambda va, vb: _to_i32(va) | _to_i32(vb),
-        OP_XOR: lambda va, vb: _to_i32(va) ^ _to_i32(vb),
-        OP_SHL: lambda va, vb: (_to_i32(vb) << (int(va) & 31)) & MASK32,
-        OP_SHR_S: lambda va, vb: _shr_s(vb, va),
-        OP_SHR_U: lambda va, vb: _shr_u(vb, va),
-        OP_ROTL: lambda va, vb: _rotl32(vb, va),
-        OP_ROTR: lambda va, vb: _rotr32(vb, va),
+    bitwise_semantics: dict[int, Callable[[int, int], int]] = {
+        OP_AND: lambda va, vb: to_i32(va) & to_i32(vb),
+        OP_OR: lambda va, vb: to_i32(va) | to_i32(vb),
+        OP_XOR: lambda va, vb: to_i32(va) ^ to_i32(vb),
+        OP_SHL: lambda va, vb: (to_i32(vb) << (int(va) & 31)) & MASK32,
+        OP_SHR_S: lambda va, vb: shr_s(vb, va),
+        OP_SHR_U: lambda va, vb: shr_u(vb, va),
+        OP_ROTL: lambda va, vb: rotl32(vb, va),
+        OP_ROTR: lambda va, vb: rotr32(vb, va),
     }
     expected = bitwise_semantics[op](va, vb)
     return [
@@ -586,7 +590,7 @@ def make_popcount_loop(n: int) -> tuple[list[Instruction], int]:
 
 def make_bit_extract(n: int, bit_pos: int) -> tuple[list[Instruction], int]:
     """Extract bit at position bit_pos from n. Result: 0 or 1."""
-    expected = (_to_i32(n) >> (bit_pos & 31)) & 1
+    expected = (to_i32(n) >> (bit_pos & 31)) & 1
     prog = [
         Instruction(OP_PUSH, n),
         Instruction(OP_PUSH, bit_pos),
@@ -607,7 +611,7 @@ def make_native_clz(n: int) -> tuple[list[Instruction], int]:
         Instruction(OP_PUSH, n),
         Instruction(OP_CLZ),
         Instruction(OP_HALT),
-    ], _clz32(n)
+    ], clz32(n)
 
 
 def make_native_ctz(n: int) -> tuple[list[Instruction], int]:
@@ -616,7 +620,7 @@ def make_native_ctz(n: int) -> tuple[list[Instruction], int]:
         Instruction(OP_PUSH, n),
         Instruction(OP_CTZ),
         Instruction(OP_HALT),
-    ], _ctz32(n)
+    ], ctz32(n)
 
 
 def make_native_popcnt(n: int) -> tuple[list[Instruction], int]:
@@ -625,7 +629,7 @@ def make_native_popcnt(n: int) -> tuple[list[Instruction], int]:
         Instruction(OP_PUSH, n),
         Instruction(OP_POPCNT),
         Instruction(OP_HALT),
-    ], _popcnt32(n)
+    ], popcnt32(n)
 
 
 def make_native_abs_unary(n: int) -> tuple[list[Instruction], int]:
@@ -677,7 +681,7 @@ def make_log2_floor(n: int) -> tuple[list[Instruction], int]:
     """Compute floor of log2(n) using CLZ: 31 - CLZ(n)."""
     if n <= 0:
         return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
-    expected = 31 - _clz32(n)
+    expected = 31 - clz32(n)
     prog = [
         Instruction(OP_PUSH, n),
         Instruction(OP_CLZ),
@@ -691,7 +695,7 @@ def make_log2_floor(n: int) -> tuple[list[Instruction], int]:
 
 def make_is_power_of_2(n: int) -> tuple[list[Instruction], int]:
     """Check if n is a power of 2 using POPCNT."""
-    expected = 1 if (n > 0 and _popcnt32(n) == 1) else 0
+    expected = 1 if (n > 0 and popcnt32(n) == 1) else 0
     prog = [
         Instruction(OP_PUSH, n),
         Instruction(OP_POPCNT),

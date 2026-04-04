@@ -1,17 +1,18 @@
 """Backend discovery and executor factory."""
 
+import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .abc import ExecutorBackend
 
 _REGISTRY: dict[str, type["ExecutorBackend"]] = {}
-_LOADED: set = set()
+_LOADED: set[str] = set()
 
 
 def register_backend(cls: type["ExecutorBackend"]) -> type["ExecutorBackend"]:
     """Register a backend class via decorator."""
-    _REGISTRY[cls.name] = cls  # type: ignore[attr-defined]
+    _REGISTRY[cls.name] = cls
     return cls
 
 
@@ -53,7 +54,7 @@ def _discover() -> None:
     ):
         if mod_name not in _LOADED:
             try:
-                __import__(mod_name)
+                importlib.import_module(mod_name)
             except ImportError:
                 pass
             finally:

@@ -28,16 +28,18 @@ References
 
 """
 
+from __future__ import annotations
+
 import re
 import sys
 
 from .assembler import compile_structured
-from .isa import OP_HALT, Instruction
+from .isa import OP_HALT, Instruction, WasmInstr
 
 # ─── WAT mnemonic -> assembler tuple name mapping ─────────────────
 
 # Simple instructions (no argument)
-_SIMPLE_OPS = {
+_SIMPLE_OPS: dict[str, str] = {
     # Arithmetic
     "i32.add": "ADD",
     "i32.sub": "SUB",
@@ -89,7 +91,7 @@ _SIMPLE_OPS = {
 
 
 # Keywords that terminate br_table label lists
-_KEYWORDS = frozenset(
+_KEYWORDS: frozenset[str] = frozenset(
     {
         "block",
         "loop",
@@ -136,7 +138,7 @@ def _tokenize(text: str) -> list[str]:
     # Remove line comments
     text = re.sub(r";;[^\n]*", "", text)
 
-    tokens = []
+    tokens: list[str] = []
     i = 0
     while i < len(text):
         c = text[i]
@@ -179,7 +181,7 @@ def _parse_int(s: str) -> int:
     return int(s)
 
 
-def _tokens_to_structured(tokens: list[str]) -> list[tuple]:  # noqa: C901, PLR0915
+def _tokens_to_structured(tokens: list[str]) -> list[WasmInstr]:  # noqa: C901, PLR0915
     """
     Convert flat token list to structured assembler tuples.
 
@@ -192,9 +194,9 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:  # noqa: C901, PLR0
     - (param ...), (result ...), (local ...) declarations — skipped
     - Named labels ($label) on block/loop/if — tracked for br resolution
     """
-    instrs = []
+    instrs: list[WasmInstr] = []
     pos = 0
-    label_stack = []  # stack of label names for br target resolution
+    label_stack: list[str | None] = []  # stack of label names for br target resolution
 
     def _skip_sexpr() -> None:
         """Skip a complete s-expression (balanced parens)."""
@@ -306,7 +308,7 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:  # noqa: C901, PLR0
                 _parse_instruction(inner)
 
                 # Check if there are nested s-expression operands
-                nested_ops = []
+                nested_ops: list[WasmInstr] = []
                 while pos < len(tokens) and tokens[pos] == "(":
                     # Parse nested operand — these go BEFORE the operator
                     len(instrs)
@@ -488,7 +490,7 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:  # noqa: C901, PLR0
 
         if tok_lower == "br_table":
             # br_table <label>* <default_label>
-            targets = []
+            targets: list[str | int] = []
             while (
                 pos < len(tokens)
                 and tokens[pos] not in ("(", ")")
