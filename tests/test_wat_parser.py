@@ -1,10 +1,14 @@
-"""Tests for the WAT parser.
+# ruff: noqa: S101
+"""
+Tests for the WAT parser.
 
 Verifies:
 1. WAT versions of Phase 4 test programs produce identical traces
 2. WAT Fibonacci, factorial, bubble sort execute correctly
 3. All WAT instruction categories parse and execute
 """
+
+from collections.abc import Callable
 
 import pytest
 
@@ -17,7 +21,8 @@ from transturing.core.wat_parser import parse_wat
 
 
 @pytest.fixture
-def executor():
+def executor() -> NumPyExecutor:
+    """Create a NumPy executor instance."""
     return NumPyExecutor()
 
 
@@ -340,12 +345,16 @@ WAT_BITWISE = """
 
 
 @pytest.mark.parametrize(
-    "test_name,test_fn",
+    ("test_name", "test_fn"),
     ALL_TESTS,
     ids=lambda x: x[0] if isinstance(x, tuple) else str(x),
 )
-def test_phase4_wat_trace_equivalence(executor, test_name, test_fn):
-    """WAT versions of Phase 4 programs produce identical traces to tuple versions."""
+def test_phase4_wat_trace_equivalence(
+    executor: NumPyExecutor,
+    test_name: str,
+    test_fn: Callable[[], tuple[list[Instruction], int]],
+) -> None:
+    """WAT versions of Phase 4 programs produce identical traces."""
     wat_text = WAT_PHASE4.get(test_name)
     if wat_text is None:
         pytest.skip(f"No WAT version for {test_name}")
@@ -374,10 +383,17 @@ _ALGORITHM_TESTS = [
 
 
 @pytest.mark.parametrize(
-    "name,wat_text,expected", _ALGORITHM_TESTS, ids=[t[0] for t in _ALGORITHM_TESTS],
+    ("_name", "wat_text", "expected"),
+    _ALGORITHM_TESTS,
+    ids=[t[0] for t in _ALGORITHM_TESTS],
 )
-def test_algorithm_programs(executor, name, wat_text, expected):
-    """Algorithm programs execute correctly via WAT."""
+def test_algorithm_programs(
+    executor: NumPyExecutor,
+    _name: str,
+    wat_text: str,
+    expected: int,
+) -> None:
+    """Verify algorithm programs execute correctly via WAT."""
     prog = parse_wat(wat_text)
     trace = executor.execute(prog)
     assert trace.steps[-1].top == expected
@@ -393,12 +409,17 @@ _CONTROL_FLOW_TESTS = [
 
 
 @pytest.mark.parametrize(
-    "name,wat_text,expected",
+    ("_name", "wat_text", "expected"),
     _CONTROL_FLOW_TESTS,
     ids=[t[0] for t in _CONTROL_FLOW_TESTS],
 )
-def test_control_flow(executor, name, wat_text, expected):
-    """Control flow constructs execute correctly via WAT."""
+def test_control_flow(
+    executor: NumPyExecutor,
+    _name: str,
+    wat_text: str,
+    expected: int,
+) -> None:
+    """Verify control flow constructs execute correctly via WAT."""
     prog = parse_wat(wat_text)
     trace = executor.execute(prog)
     assert trace.steps[-1].top == expected
@@ -415,12 +436,17 @@ _INSTRUCTION_CATEGORY_TESTS = [
 
 
 @pytest.mark.parametrize(
-    "name,wat_text,expected",
+    ("_name", "wat_text", "expected"),
     _INSTRUCTION_CATEGORY_TESTS,
     ids=[t[0] for t in _INSTRUCTION_CATEGORY_TESTS],
 )
-def test_instruction_categories(executor, name, wat_text, expected):
-    """Instruction category programs execute correctly via WAT."""
+def test_instruction_categories(
+    executor: NumPyExecutor,
+    _name: str,
+    wat_text: str,
+    expected: int,
+) -> None:
+    """Verify instruction category programs execute correctly via WAT."""
     prog = parse_wat(wat_text)
     trace = executor.execute(prog)
     assert trace.steps[-1].top == expected
@@ -429,34 +455,37 @@ def test_instruction_categories(executor, name, wat_text, expected):
 # ─── Edge cases ──────────────────────────────────────────────────
 
 
-def test_empty_input():
-    """Empty input produces empty program."""
+def test_empty_input() -> None:
+    """Verify empty input produces empty program."""
     prog = parse_wat("")
     assert len(prog) == 0
 
 
-def test_comments_only():
-    """Comments-only input produces empty program."""
+def test_comments_only() -> None:
+    """Verify comments-only input produces empty program."""
     prog = parse_wat(";; just a comment\n(; block ;)")
     assert len(prog) == 0
 
 
-def test_negative_integer(executor):
-    """Negative integer constants parse and execute correctly."""
+def test_negative_integer(executor: NumPyExecutor) -> None:
+    """Verify negative integer constants parse and execute correctly."""
+    expected_neg5 = -5
     prog = parse_wat("i32.const -5 halt")
     trace = executor.execute(prog)
-    assert trace.steps[-1].top == -5
+    assert trace.steps[-1].top == expected_neg5
 
 
-def test_hex_literal(executor):
-    """Hex literal constants parse and execute correctly."""
+def test_hex_literal(executor: NumPyExecutor) -> None:
+    """Verify hex literal constants parse and execute correctly."""
+    expected_0x1a = 26
     prog = parse_wat("i32.const 0x1A halt")
     trace = executor.execute(prog)
-    assert trace.steps[-1].top == 26
+    assert trace.steps[-1].top == expected_0x1a
 
 
-def test_s_expression_form(executor):
-    """S-expression form parses and executes correctly."""
+def test_s_expression_form(executor: NumPyExecutor) -> None:
+    """Verify S-expression form parses and executes correctly."""
+    expected_sum = 8
     prog = parse_wat(
         """
         (i32.add
@@ -466,11 +495,11 @@ def test_s_expression_form(executor):
     """,
     )
     trace = executor.execute(prog)
-    assert trace.steps[-1].top == 8
+    assert trace.steps[-1].top == expected_sum
 
 
-def test_module_func_wrapper():
-    """Module + func wrapper is stripped correctly."""
+def test_module_func_wrapper() -> None:
+    """Verify module + func wrapper is stripped correctly."""
     prog = parse_wat(
         """
         (module
@@ -483,13 +512,13 @@ def test_module_func_wrapper():
     assert prog[0] == Instruction(OP_PUSH, 99)
 
 
-def test_missing_arg_raises():
-    """Missing argument raises ValueError."""
-    with pytest.raises(ValueError):
+def test_missing_arg_raises() -> None:
+    """Verify missing argument raises ValueError."""
+    with pytest.raises(ValueError, match="requires a value argument"):
         parse_wat("i32.const")
 
 
-def test_unknown_instruction_raises():
-    """Unknown instruction raises ValueError."""
-    with pytest.raises(ValueError):
+def test_unknown_instruction_raises() -> None:
+    """Verify unknown instruction raises ValueError."""
+    with pytest.raises(ValueError, match="Unknown WAT instruction"):
         parse_wat("invalid_instruction")

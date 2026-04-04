@@ -1,4 +1,5 @@
-"""Structured control flow assembler for the stack machine.
+"""
+Structured control flow assembler for the stack machine.
 
 Compiles WASM-style structured programs to flat Instruction lists
 suitable for NumPyExecutor and TorchExecutor.
@@ -56,8 +57,9 @@ from .isa import (
 )
 
 
-def compile_structured(wasm_instrs):
-    """Compile structured WASM-style instructions to flat Instruction list.
+def compile_structured(wasm_instrs: list[Instruction]) -> list[Instruction]:  # noqa: C901, PLR0912, PLR0915
+    """
+    Compile structured WASM-style instructions to flat Instruction list.
 
     Args:
         wasm_instrs: list of tuples.  Structured constructs are:
@@ -95,46 +97,50 @@ def compile_structured(wasm_instrs):
 
     # ── label helpers ────────────────────────────────────────────────
 
-    def _alloc():
+    def _alloc() -> int:
         lbl = _nxt[0]
         _nxt[0] += 1
         pending[lbl] = []
         return lbl
 
-    def _resolve(lbl):
+    def _resolve(lbl: int) -> None:
         """Patch every pending jump for lbl to the current flat length."""
         addr = len(flat)
         for idx in pending.pop(lbl):
             flat[idx] = Instruction(flat[idx].op, addr)
 
-    def _jcc_fwd(op, lbl):
+    def _jcc_fwd(op: int, lbl: int) -> None:
         """Emit a conditional jump (OP_JZ or OP_JNZ) to a forward label."""
         flat.append(Instruction(op, 0))
         pending[lbl].append(len(flat) - 1)
 
-    def _jump_fwd(lbl):
+    def _jump_fwd(lbl: int) -> None:
         """Emit unconditional jump (PUSH 1; JNZ) to a forward label."""
         flat.append(Instruction(OP_PUSH, 1))
         flat.append(Instruction(OP_JNZ, 0))
         pending[lbl].append(len(flat) - 1)
 
-    def _jump_addr(addr):
+    def _jump_addr(addr: int) -> None:
         """Emit unconditional jump (PUSH 1; JNZ) to a known address."""
         flat.append(Instruction(OP_PUSH, 1))
         flat.append(Instruction(OP_JNZ, addr))
 
-    def _blk(n):
+    def _blk(n: int) -> dict[str, object]:
         """Return the n-th enclosing frame (0 = innermost)."""
         idx = len(lbl_stack) - 1 - n
         if idx < 0:
-            raise ValueError(
+            msg = (
                 f"BR/BR_IF/BR_TABLE depth {n} exceeds label stack depth "
-                f"{len(lbl_stack)}",
+                f"{len(lbl_stack)}"
+            )
+            raise ValueError(
+                msg,
             )
         return lbl_stack[idx]
 
-    def _jump_to_blk(blk):
-        """Emit a jump (unconditional) to the natural target of blk.
+    def _jump_to_blk(blk: dict[str, object]) -> None:
+        """
+        Emit a jump (unconditional) to the natural target of blk.
 
         For LOOP: jump to start (backward, known addr).
         For BLOCK/IF: jump to end (forward, pending label).
@@ -144,7 +150,7 @@ def compile_structured(wasm_instrs):
         else:
             _jump_fwd(blk["end"])
 
-    def _jcc_to_blk(op, blk):
+    def _jcc_to_blk(op: int, blk: dict[str, object]) -> None:
         """Emit a conditional jump (op) to the natural target of blk."""
         if blk["kind"] == "loop":
             flat.append(Instruction(op, blk["start"]))
@@ -155,8 +161,9 @@ def compile_structured(wasm_instrs):
 
     for raw in wasm_instrs:
         if not isinstance(raw, (list, tuple)):
+            msg = f"Expected tuple/list instruction, got {type(raw).__name__}: {raw!r}"
             raise TypeError(
-                f"Expected tuple/list instruction, got {type(raw).__name__}: {raw!r}",
+                msg,
             )
         name = raw[0].upper() if isinstance(raw[0], str) else raw[0]
 
@@ -180,16 +187,15 @@ def compile_structured(wasm_instrs):
         elif name == "ELSE":
             blk = lbl_stack[-1]
             if blk["kind"] != "if":
-                raise ValueError(f"ELSE without matching IF (found {blk['kind']!r})")
+                msg = f"ELSE without matching IF (found {blk['kind']!r})"
+                raise ValueError(msg)
             _jump_fwd(blk["end"])  # then-branch skips else-body
             _resolve(blk["else"])  # else-body starts here
 
         elif name == "END":
             blk = lbl_stack.pop()
-            if blk["kind"] == "if":
-                # If no ELSE was seen, the else-label still needs resolving.
-                if blk["else"] in pending:
-                    _resolve(blk["else"])
+            if blk["kind"] == "if" and blk["else"] in pending:
+                _resolve(blk["else"])
             _resolve(blk["end"])
 
         elif name == "BR":
@@ -221,7 +227,7 @@ def compile_structured(wasm_instrs):
             _jump_to_blk(_blk(default_depth))
 
             # ── case handlers: POP index + jump to case target ───────
-            for depth, hlbl in zip(labels, handler_lbls):
+            for depth, hlbl in zip(labels, handler_lbls, strict=False):
                 _resolve(hlbl)
                 flat.append(Instruction(OP_POP, 0))
                 _jump_to_blk(_blk(depth))

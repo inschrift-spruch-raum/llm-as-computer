@@ -1,4 +1,5 @@
-"""NumPy-based executor backend for the compiled transformer stack machine.
+"""
+NumPy-based executor backend for the compiled transformer stack machine.
 
 Pure-NumPy reference implementation with full 55-opcode ISA.
 Uses parabolic key addressing for stack, locals, heap, and call-stack memory spaces.
@@ -65,6 +66,7 @@ from transturing.core.isa import (
     OP_SWAP,
     OP_TRAP,
     OP_XOR,
+    Instruction,
     Trace,
     TraceStep,
     _clz32,
@@ -85,16 +87,23 @@ from transturing.core.registry import register_backend
 
 @register_backend
 class NumPyExecutor(ExecutorBackend):
-    """Compiled numpy executor with full 55-opcode ISA.
+    """
+    Compiled numpy executor with full 55-opcode ISA.
 
-    Flattened from Phase14Executor <- Phase13Executor <- ExtendedExecutor <- CompiledExecutorNumpy.
-    Uses parabolic key addressing (2D dot-product + argmax) for all memory reads.
-    Float64 precision via numpy arrays; local eps=1e-10 for recency bias.
+    Flattened from Phase14Executor <- Phase13Executor <- ExtendedExecutor
+    <- CompiledExecutorNumpy. Uses parabolic key addressing (2D dot-product
+    + argmax) for all memory reads. Float64 precision via numpy arrays;
+    local eps=1e-10 for recency bias.
     """
 
     name = "numpy"
 
-    def execute(self, prog, max_steps=50000):
+    def execute(  # noqa: C901, PLR0912, PLR0915
+        self,
+        prog: list[Instruction],
+        max_steps: int = 50000,
+    ) -> Trace:
+        """Execute a program and return the execution trace."""
         trace = Trace(program=prog)
 
         stack_keys = []
@@ -119,13 +128,13 @@ class NumPyExecutor(ExecutorBackend):
         ip = 0
         sp = 0
 
-        def stack_write(addr, val):
+        def stack_write(addr: int, val: int) -> None:
             nonlocal write_count
             stack_keys.append((2.0 * addr, -float(addr * addr) + eps * write_count))
             stack_vals.append(val)
             write_count += 1
 
-        def stack_read(addr):
+        def stack_read(addr: int) -> int:
             if not stack_keys:
                 return 0
             keys = np.array(stack_keys)
@@ -135,7 +144,7 @@ class NumPyExecutor(ExecutorBackend):
             stored_addr = round(keys[best, 0] / 2.0)
             return stack_vals[best] if stored_addr == addr else 0
 
-        def local_write(local_idx, val):
+        def local_write(local_idx: int, val: int) -> None:
             nonlocal local_write_count
             actual_idx = locals_base + local_idx
             locals_keys.append(
@@ -147,7 +156,7 @@ class NumPyExecutor(ExecutorBackend):
             locals_vals.append(val)
             local_write_count += 1
 
-        def local_read(local_idx):
+        def local_read(local_idx: int) -> int:
             if not locals_keys:
                 return 0
             actual_idx = locals_base + local_idx
@@ -158,13 +167,13 @@ class NumPyExecutor(ExecutorBackend):
             stored_idx = round(keys[best, 0] / 2.0)
             return locals_vals[best] if stored_idx == actual_idx else 0
 
-        def heap_write(addr, val):
+        def heap_write(addr: int, val: int) -> None:
             nonlocal heap_write_count
             heap_keys.append((2.0 * addr, -float(addr * addr) + eps * heap_write_count))
             heap_vals.append(val)
             heap_write_count += 1
 
-        def heap_read(addr):
+        def heap_read(addr: int) -> int:
             if not heap_keys:
                 return 0
             keys = np.array(heap_keys)
@@ -174,7 +183,7 @@ class NumPyExecutor(ExecutorBackend):
             stored_addr = round(keys[best, 0] / 2.0)
             return heap_vals[best] if stored_addr == addr else 0
 
-        for step in range(max_steps):
+        for _step in range(max_steps):
             if ip >= len(prog):
                 break
 
@@ -281,9 +290,9 @@ class NumPyExecutor(ExecutorBackend):
             ):
                 val_a = stack_read(sp)
                 val_b = stack_read(sp - 1)
-                if op in (OP_EQ,):
+                if op == OP_EQ:
                     result = 1 if val_a == val_b else 0
-                elif op in (OP_NE,):
+                elif op == OP_NE:
                     result = 1 if val_a != val_b else 0
                 elif op in (OP_LT_S, OP_LT_U):
                     result = 1 if val_b < val_a else 0

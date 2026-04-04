@@ -31,6 +31,7 @@ dev = [
     "transturing[all]",
     "pytest>=9.0.2",
     "ruff>=0.8",
+    "pyright>=1.1.408",
 ]
 
 [build-system]
@@ -42,3 +43,4 @@ testpaths = ["tests"]
 
 [tool.ruff]
 lint.extend-select = ["ALL"]
+lint.ignore = ["COM812", "D203", "D212"]

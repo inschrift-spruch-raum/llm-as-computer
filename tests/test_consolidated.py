@@ -1,8 +1,12 @@
-"""Executor correctness tests: verify NumPy and PyTorch backends produce expected results.
+# ruff: noqa: S101
+"""
+Verify NumPy and PyTorch backends produce expected results.
 
 Imports from the core package (transturing).
 Cross-validates NumPy vs PyTorch traces for internal consistency.
 """
+
+from collections.abc import Iterator
 
 import pytest
 
@@ -74,12 +78,14 @@ from transturing.core.programs import (
 
 
 @pytest.fixture
-def np_exec():
+def np_exec() -> NumPyExecutor:
+    """Create a NumPy executor instance."""
     return NumPyExecutor()
 
 
 @pytest.fixture
-def pt_exec():
+def pt_exec() -> TorchExecutor:
+    """Create a PyTorch executor instance."""
     return TorchExecutor()
 
 
@@ -88,14 +94,14 @@ def pt_exec():
 # ---------------------------------------------------------------------------
 
 
-def _phase4_tests():
+def _phase4_tests() -> Iterator[tuple[str, list[Instruction], int]]:
     """Phase 4: ALL_TESTS entries.  Each yields (name, prog, expected)."""
     for name, test_fn in ALL_TESTS:
         prog, expected = test_fn()
         yield (name, prog, expected)
 
 
-def _phase11_extended():
+def _phase11_extended() -> list[tuple[str, list[Instruction], int]]:
     """Phase 11 extended instruction tests."""
     return [
         (
@@ -135,7 +141,7 @@ def _phase11_extended():
     ]
 
 
-def _phase13_algos_numpy():
+def _phase13_algos_numpy() -> list[tuple[str, list[Instruction], int]]:
     """Phase 13 algorithms used in NumPy equivalence tests."""
     return [
         ("fib(10)", *make_fibonacci(10)),
@@ -148,7 +154,7 @@ def _phase13_algos_numpy():
     ]
 
 
-def _phase13_algos_torch():
+def _phase13_algos_torch() -> list[tuple[str, list[Instruction], int]]:
     """Phase 13 algorithms used in Torch equivalence tests."""
     return [
         ("fib(10)", *make_fibonacci(10)),
@@ -158,7 +164,7 @@ def _phase13_algos_torch():
     ]
 
 
-def _phase13_algos_consistency():
+def _phase13_algos_consistency() -> list[tuple[str, list[Instruction], int]]:
     """Phase 13 algorithms used in internal consistency tests."""
     return [
         ("fib(10)", *make_fibonacci(10)),
@@ -168,7 +174,7 @@ def _phase13_algos_consistency():
     ]
 
 
-def _phase14_arith():
+def _phase14_arith() -> list[tuple[str, list[Instruction], int]]:
     """Phase 14 arithmetic tests."""
     return [
         ("native_mul(7,8)", *make_native_multiply(7, 8)),
@@ -184,7 +190,7 @@ def _phase14_arith():
     ]
 
 
-def _phase14_cmp():
+def _phase14_cmp() -> list[tuple[str, list[Instruction], int]]:
     """Phase 14 comparison tests."""
     return [
         ("eqz(0)", *make_compare_eqz(0)),
@@ -200,7 +206,7 @@ def _phase14_cmp():
     ]
 
 
-def _phase14_bit():
+def _phase14_bit() -> list[tuple[str, list[Instruction], int]]:
     """Phase 14 bitwise tests."""
     return [
         ("and(0xFF,0x0F)", *make_bitwise_binary(OP_AND, 0xFF, 0x0F)),
@@ -215,7 +221,7 @@ def _phase14_bit():
     ]
 
 
-def _phase14_unary():
+def _phase14_unary() -> list[tuple[str, list[Instruction], int]]:
     """Phase 14 unary + parametric tests."""
     return [
         ("clz(0)", *make_native_clz(0)),
@@ -235,7 +241,7 @@ def _phase14_unary():
     ]
 
 
-def _phase14_torch():
+def _phase14_torch() -> list[tuple[str, list[Instruction], int]]:
     """Phase 14 tests used in Torch equivalence."""
     return [
         ("native_mul(12,10)", *make_native_multiply(12, 10)),
@@ -257,7 +263,7 @@ def _phase14_torch():
     ]
 
 
-def _phase14_consistency():
+def _phase14_consistency() -> list[tuple[str, list[Instruction], int]]:
     """Phase 14 full-coverage tests for internal consistency."""
     return [
         ("native_mul(100,200)", *make_native_multiply(100, 200)),
@@ -288,7 +294,7 @@ def _phase14_consistency():
     ]
 
 
-def _trap_progs_numpy():
+def _trap_progs_numpy() -> list[tuple[str, list[Instruction]]]:
     """Trap test programs for NumPy equivalence."""
     return [
         (
@@ -312,7 +318,7 @@ def _trap_progs_numpy():
     ]
 
 
-def _trap_progs_torch():
+def _trap_progs_torch() -> list[tuple[str, list[Instruction]]]:
     """Trap test programs for Torch equivalence."""
     return [
         (
@@ -341,102 +347,231 @@ def _trap_progs_torch():
 # ---------------------------------------------------------------------------
 
 
-def _id_fn(val):
+def _id_fn(val: object) -> str | None:
     """Use the test name as the pytest id when val is a string."""
     return val if isinstance(val, str) else None
 
 
 # ---------------------------------------------------------------------------
-# NumPy equivalence tests (old Phase14Executor vs new NumPyExecutor)
+# NumPy equivalence tests
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name,prog,expected", list(_phase4_tests()), ids=_id_fn)
-def test_numpy_phase4(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    list(_phase4_tests()),
+    ids=_id_fn,
+)
+def test_numpy_phase4(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 4 results."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase11_extended(), ids=_id_fn)
-def test_numpy_phase11(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase11_extended(),
+    ids=_id_fn,
+)
+def test_numpy_phase11(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 11 results."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase13_algos_numpy(), ids=_id_fn)
-def test_numpy_phase13(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase13_algos_numpy(),
+    ids=_id_fn,
+)
+def test_numpy_phase13(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 13 results."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase14_arith(), ids=_id_fn)
-def test_numpy_phase14_arith(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase14_arith(),
+    ids=_id_fn,
+)
+def test_numpy_phase14_arith(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 14 arithmetic."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase14_cmp(), ids=_id_fn)
-def test_numpy_phase14_cmp(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase14_cmp(),
+    ids=_id_fn,
+)
+def test_numpy_phase14_cmp(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 14 comparisons."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase14_bit(), ids=_id_fn)
-def test_numpy_phase14_bit(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase14_bit(),
+    ids=_id_fn,
+)
+def test_numpy_phase14_bit(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 14 bitwise ops."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase14_unary(), ids=_id_fn)
-def test_numpy_phase14_unary(np_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase14_unary(),
+    ids=_id_fn,
+)
+def test_numpy_phase14_unary(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy executor produces correct Phase 14 unary ops."""
     trace = np_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog", _trap_progs_numpy(), ids=_id_fn)
-def test_numpy_trap(np_exec, name, prog):
+@pytest.mark.parametrize(
+    ("_name", "prog"),
+    _trap_progs_numpy(),
+    ids=_id_fn,
+)
+def test_numpy_trap(
+    np_exec: NumPyExecutor,
+    _name: str,
+    prog: list[Instruction],
+) -> None:
+    """Verify NumPy executor traps on invalid operations."""
     trace = np_exec.execute(prog)
     trapped = trace.steps and trace.steps[-1].op == OP_TRAP
     assert trapped, "Executor did not trap"
 
 
 # ---------------------------------------------------------------------------
-# Torch equivalence tests (old Phase14PyTorchExecutor vs new TorchExecutor)
+# Torch equivalence tests
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name,prog,expected", list(_phase4_tests()), ids=_id_fn)
-def test_torch_phase4(pt_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    list(_phase4_tests()),
+    ids=_id_fn,
+)
+def test_torch_phase4(
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify Torch executor produces correct Phase 4 results."""
     trace = pt_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase13_algos_torch(), ids=_id_fn)
-def test_torch_phase13(pt_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase13_algos_torch(),
+    ids=_id_fn,
+)
+def test_torch_phase13(
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify Torch executor produces correct Phase 13 results."""
     trace = pt_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase14_torch(), ids=_id_fn)
-def test_torch_phase14(pt_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase14_torch(),
+    ids=_id_fn,
+)
+def test_torch_phase14(
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify Torch executor produces correct Phase 14 results."""
     trace = pt_exec.execute(prog)
     assert trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog", _trap_progs_torch(), ids=_id_fn)
-def test_torch_trap(pt_exec, name, prog):
+@pytest.mark.parametrize(
+    ("_name", "prog"),
+    _trap_progs_torch(),
+    ids=_id_fn,
+)
+def test_torch_trap(
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+) -> None:
+    """Verify Torch executor traps on invalid operations."""
     trace = pt_exec.execute(prog)
     trapped = trace.steps and trace.steps[-1].op == OP_TRAP
     assert trapped, "Executor did not trap"
 
 
 # ---------------------------------------------------------------------------
-# Internal consistency tests (new NumPyExecutor vs new TorchExecutor)
+# Internal consistency tests (NumPyExecutor vs TorchExecutor)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name,prog,expected", list(_phase4_tests()), ids=_id_fn)
-def test_consistency_phase4(np_exec, pt_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    list(_phase4_tests()),
+    ids=_id_fn,
+)
+def test_consistency_phase4(
+    np_exec: NumPyExecutor,
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy and Torch traces match for Phase 4 programs."""
     np_trace = np_exec.execute(prog)
     pt_trace = pt_exec.execute(prog)
     match, detail = compare_traces(np_trace, pt_trace)
@@ -445,8 +580,19 @@ def test_consistency_phase4(np_exec, pt_exec, name, prog, expected):
     assert pt_trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase13_algos_consistency(), ids=_id_fn)
-def test_consistency_phase13(np_exec, pt_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase13_algos_consistency(),
+    ids=_id_fn,
+)
+def test_consistency_phase13(
+    np_exec: NumPyExecutor,
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy and Torch traces match for Phase 13 programs."""
     np_trace = np_exec.execute(prog)
     pt_trace = pt_exec.execute(prog)
     match, detail = compare_traces(np_trace, pt_trace)
@@ -455,8 +601,19 @@ def test_consistency_phase13(np_exec, pt_exec, name, prog, expected):
     assert pt_trace.steps[-1].top == expected
 
 
-@pytest.mark.parametrize("name,prog,expected", _phase14_consistency(), ids=_id_fn)
-def test_consistency_phase14(np_exec, pt_exec, name, prog, expected):
+@pytest.mark.parametrize(
+    ("_name", "prog", "expected"),
+    _phase14_consistency(),
+    ids=_id_fn,
+)
+def test_consistency_phase14(
+    np_exec: NumPyExecutor,
+    pt_exec: TorchExecutor,
+    _name: str,
+    prog: list[Instruction],
+    expected: int,
+) -> None:
+    """Verify NumPy and Torch traces match for Phase 14 programs."""
     np_trace = np_exec.execute(prog)
     pt_trace = pt_exec.execute(prog)
     match, detail = compare_traces(np_trace, pt_trace)

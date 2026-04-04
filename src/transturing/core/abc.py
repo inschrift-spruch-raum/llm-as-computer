@@ -6,7 +6,8 @@ from .isa import Instruction, Trace
 
 
 class ExecutorBackend(ABC):
-    """Abstract base class for all executor backends.
+    """
+    Abstract base class for all executor backends.
 
     Both NumPyExecutor and TorchExecutor implement this interface.
     """

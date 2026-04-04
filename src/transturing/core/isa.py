@@ -1,4 +1,5 @@
-"""ISA definition for the compiled transformer stack machine.
+"""
+ISA definition for the compiled transformer stack machine.
 
 Core, zero-dependency module containing:
   - Types: Instruction, Trace, TraceStep
@@ -13,17 +14,26 @@ Torch-specific items (CompiledAttentionHead, TokenVocab, embed_* functions, DTYP
 live in transturing.backends.torch_backend.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .abc import ExecutorBackend
 
 # ─── Types ──────────────────────────────────────────────────────────
 
 
 @dataclass
 class Instruction:
+    """A single ISA instruction with opcode and optional argument."""
+
     op: int
     arg: int = 0
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Return human-readable instruction string."""
         name = OP_NAMES.get(self.op, f"?{self.op}")
         if self.op in (
             OP_PUSH,
@@ -38,8 +48,8 @@ class Instruction:
         return name
 
 
-def program(*instrs) -> list[Instruction]:
-    """Convenience: program(('PUSH', 3), ('PUSH', 5), ('ADD',), ('HALT',))"""
+def program(*instrs: Instruction | tuple) -> list[Instruction]:
+    """Build a program from instruction tuples or Instruction objects."""
     result = []
     _name_to_op = {
         "PUSH": 1,
@@ -119,6 +129,7 @@ class TraceStep:
     top: int  # top-of-stack value AFTER execution
 
     def tokens(self) -> list[int]:
+        """Return token representation of this step."""
         return [self.op, self.arg, self.sp, self.top]
 
 
@@ -503,74 +514,74 @@ NONLINEAR_OPS = {
 MASK32 = 0xFFFFFFFF
 
 
-def _trunc_div(b, a):
+def _trunc_div(b: int, a: int) -> int:
     """Signed integer division truncating toward zero (WASM semantics)."""
     return int(b / a)
 
 
-def _trunc_rem(b, a):
+def _trunc_rem(b: int, a: int) -> int:
     """Signed remainder matching truncated division: b - trunc(b/a)*a."""
     return b - _trunc_div(b, a) * a
 
 
-def _to_i32(val):
+def _to_i32(val: int) -> int:
     """Cast to 32-bit signed integer from potentially float stack value."""
     return int(val) & MASK32
 
 
-def _shr_u(b, a):
+def _shr_u(b: int, a: int) -> int:
     """Logical (unsigned) right shift of b by a positions."""
     return _to_i32(b) >> (int(a) & 31)
 
 
-def _shr_s(b, a):
+def _shr_s(b: int, a: int) -> int:
     """Arithmetic (signed) right shift of b by a positions."""
     val = _to_i32(b)
-    if val >= 0x80000000:
+    if val >= 0x80000000:  # noqa: PLR2004
         val -= 0x100000000
     shift = int(a) & 31
     result = val >> shift
     return result & MASK32 if result < 0 else result
 
 
-def _rotl32(b, a):
+def _rotl32(b: int, a: int) -> int:
     """Left-rotate b by a positions within 32-bit word."""
     val = _to_i32(b)
     shift = int(a) & 31
     return ((val << shift) | (val >> (32 - shift))) & MASK32 if shift else val
 
 
-def _rotr32(b, a):
+def _rotr32(b: int, a: int) -> int:
     """Right-rotate b by a positions within 32-bit word."""
     val = _to_i32(b)
     shift = int(a) & 31
     return ((val >> shift) | (val << (32 - shift))) & MASK32 if shift else val
 
 
-def _clz32(val):
+def _clz32(val: int) -> int:
     """Count leading zeros in 32-bit representation."""
     v = _to_i32(val)
     if v == 0:
         return 32
     n = 0
-    if v <= 0x0000FFFF:
+    if v <= 0x0000FFFF:  # noqa: PLR2004
         n += 16
         v <<= 16
-    if v <= 0x00FFFFFF:
+    if v <= 0x00FFFFFF:  # noqa: PLR2004
         n += 8
         v <<= 8
-    if v <= 0x0FFFFFFF:
+    if v <= 0x0FFFFFFF:  # noqa: PLR2004
         n += 4
         v <<= 4
-    if v <= 0x3FFFFFFF:
+    if v <= 0x3FFFFFFF:  # noqa: PLR2004
         n += 2
         v <<= 2
-    if v <= 0x7FFFFFFF:
+    if v <= 0x7FFFFFFF:  # noqa: PLR2004
         n += 1
     return n
 
 
-def _ctz32(val):
+def _ctz32(val: int) -> int:
     """Count trailing zeros in 32-bit representation."""
     v = _to_i32(val)
     if v == 0:
@@ -593,37 +604,45 @@ def _ctz32(val):
     return n
 
 
-def _popcnt32(val):
-    """Population count (number of set bits) in 32-bit representation."""
-    return bin(_to_i32(val)).count("1")
+def _popcnt32(val: int) -> int:
+    """Count set bits in 32-bit representation."""
+    return _to_i32(val).bit_count()
 
 
-def _sign_extend_8(val):
+def _sign_extend_8(val: int) -> int:
     """Sign-extend an 8-bit value to a signed integer."""
     v = int(val) & 0xFF
-    return v - 0x100 if v >= 0x80 else v
+    return v - 0x100 if v >= 0x80 else v  # noqa: PLR2004
 
 
-def _sign_extend_16(val):
+def _sign_extend_16(val: int) -> int:
     """Sign-extend a 16-bit value to a signed integer."""
     v = int(val) & 0xFFFF
-    return v - 0x10000 if v >= 0x8000 else v
+    return v - 0x10000 if v >= 0x8000 else v  # noqa: PLR2004
 
 
 # ─── Test Utilities ────────────────────────────────────────────────
 
 
-def compare_traces(trace_a, trace_b):
-    """Compare two traces token by token. Returns (match: bool, detail: str)."""
+def compare_traces(trace_a: Trace, trace_b: Trace) -> tuple[bool, str]:
+    """Compare two traces token by token. Returns (match, detail)."""
     if len(trace_a.steps) != len(trace_b.steps):
         return False, f"length mismatch: {len(trace_a.steps)} vs {len(trace_b.steps)}"
-    for i, (a, b) in enumerate(zip(trace_a.steps, trace_b.steps)):
+    for i, (a, b) in enumerate(zip(trace_a.steps, trace_b.steps, strict=True)):
         if a.tokens() != b.tokens():
             return False, f"step {i}: {a.tokens()} vs {b.tokens()}"
     return True, "match"
 
 
-def test_algorithm(name, prog, expected, np_exec, pt_exec, verbose=False):
+def test_algorithm(  # noqa: PLR0913
+    name: str,
+    prog: list[Instruction],
+    expected: int | None,
+    np_exec: ExecutorBackend,
+    pt_exec: ExecutorBackend,
+    *,
+    verbose: bool = False,  # noqa: PT028
+) -> tuple[bool, int]:
     """Run an algorithm on both executors and verify."""
     np_trace = np_exec.execute(prog)
     pt_trace = pt_exec.execute(prog)
@@ -637,7 +656,7 @@ def test_algorithm(name, prog, expected, np_exec, pt_exec, verbose=False):
     all_ok = np_ok and pt_ok and match
 
     status = "PASS" if all_ok else "FAIL"
-    print(
+    print(  # noqa: T201
         f"  {status}  {name:30s}  expected={expected:>6}  "
         f"numpy={np_top:>6}  torch={pt_top:>6}  "
         f"steps={len(np_trace.steps):>4}  trace_match={'Y' if match else 'N'}",
@@ -645,16 +664,23 @@ def test_algorithm(name, prog, expected, np_exec, pt_exec, verbose=False):
 
     if not all_ok and verbose:
         if not match:
-            print(f"         Trace mismatch: {detail}")
+            print(f"         Trace mismatch: {detail}")  # noqa: T201
         if not np_ok:
-            print(f"         NumPy wrong: got {np_top}, expected {expected}")
+            print(f"         NumPy wrong: got {np_top}, expected {expected}")  # noqa: T201
         if not pt_ok:
-            print(f"         PyTorch wrong: got {pt_top}, expected {expected}")
+            print(f"         PyTorch wrong: got {pt_top}, expected {expected}")  # noqa: T201
 
     return all_ok, len(np_trace.steps)
 
 
-def test_trap_algorithm(name, prog, np_exec, pt_exec, verbose=False):
+def test_trap_algorithm(
+    name: str,
+    prog: list[Instruction],
+    np_exec: ExecutorBackend,
+    pt_exec: ExecutorBackend,
+    *,
+    verbose: bool = False,  # noqa: PT028
+) -> bool:
     """Run a program expected to TRAP on both executors. Returns True if both trap."""
     np_trace = np_exec.execute(prog)
     pt_trace = pt_exec.execute(prog)
@@ -675,17 +701,17 @@ def test_trap_algorithm(name, prog, np_exec, pt_exec, verbose=False):
         if pt_trapped
         else f"top={pt_trace.steps[-1].top if pt_trace.steps else '?'}"
     )
-    print(
+    print(  # noqa: T201
         f"  {status}  {name:30s}  numpy={np_label:>10}  torch={pt_label:>10}  "
         f"trace_match={'Y' if match else 'N'}",
     )
 
     if not all_ok and verbose:
         if not np_trapped:
-            print("         NumPy did not trap")
+            print("         NumPy did not trap")  # noqa: T201
         if not pt_trapped:
-            print("         PyTorch did not trap")
+            print("         PyTorch did not trap")  # noqa: T201
         if not match:
-            print(f"         Trace mismatch: {detail}")
+            print(f"         Trace mismatch: {detail}")  # noqa: T201
 
     return all_ok

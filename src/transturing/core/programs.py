@@ -1,4 +1,5 @@
-"""Program generators for the compiled transformer stack machine.
+"""
+Program generators for the compiled transformer stack machine.
 
 Consolidated from phase4, phase13, phase14. Contains all test program
 generators and the ALL_TESTS regression list.
@@ -65,49 +66,49 @@ from .isa import (
 # ─── Phase 4 Test Programs ──────────────────────────────────────
 
 
-def test_basic():
+def test_basic() -> tuple[list[Instruction], int]:
     """PUSH 3, PUSH 5, ADD, HALT -> top should be 8."""
     prog = program(("PUSH", 3), ("PUSH", 5), ("ADD",), ("HALT",))
     return prog, 8
 
 
-def test_push_halt():
+def test_push_halt() -> tuple[list[Instruction], int]:
     """PUSH 42, HALT -> top should be 42."""
     prog = program(("PUSH", 42), ("HALT",))
     return prog, 42
 
 
-def test_push_pop():
+def test_push_pop() -> tuple[list[Instruction], int]:
     """PUSH 10, PUSH 20, POP, HALT -> top should be 10."""
     prog = program(("PUSH", 10), ("PUSH", 20), ("POP",), ("HALT",))
     return prog, 10
 
 
-def test_dup_add():
+def test_dup_add() -> tuple[list[Instruction], int]:
     """PUSH 7, DUP, ADD, HALT -> top should be 14."""
     prog = program(("PUSH", 7), ("DUP",), ("ADD",), ("HALT",))
     return prog, 14
 
 
-def test_multi_add():
+def test_multi_add() -> tuple[list[Instruction], int]:
     """PUSH 1, PUSH 2, PUSH 3, ADD, ADD, HALT -> top should be 6."""
     prog = program(("PUSH", 1), ("PUSH", 2), ("PUSH", 3), ("ADD",), ("ADD",), ("HALT",))
     return prog, 6
 
 
-def test_stack_depth():
+def test_stack_depth() -> tuple[list[Instruction], int]:
     """PUSH 1, PUSH 2, PUSH 3, POP, POP, HALT -> top should be 1."""
     prog = program(("PUSH", 1), ("PUSH", 2), ("PUSH", 3), ("POP",), ("POP",), ("HALT",))
     return prog, 1
 
 
-def test_overwrite():
+def test_overwrite() -> tuple[list[Instruction], int]:
     """PUSH 5, POP, PUSH 9, HALT -> top should be 9."""
     prog = program(("PUSH", 5), ("POP",), ("PUSH", 9), ("HALT",))
     return prog, 9
 
 
-def test_complex():
+def test_complex() -> tuple[list[Instruction], int]:
     """PUSH 10, PUSH 20, PUSH 30, ADD, DUP, ADD, HALT -> 100."""
     prog = program(
         ("PUSH", 10),
@@ -121,7 +122,7 @@ def test_complex():
     return prog, 100
 
 
-def test_many_pushes():
+def test_many_pushes() -> tuple[list[Instruction], int]:
     """Push values 1..10, then ADD them all."""
     instrs = [("PUSH", i) for i in range(1, 11)]
     instrs += [("ADD",)] * 9
@@ -130,7 +131,7 @@ def test_many_pushes():
     return prog, 55
 
 
-def test_alternating():
+def test_alternating() -> tuple[list[Instruction], int]:
     """PUSH 1, PUSH 2, ADD, PUSH 3, ADD, PUSH 4, ADD, HALT -> 10."""
     prog = program(
         ("PUSH", 1),
@@ -162,8 +163,8 @@ ALL_TESTS = [
 # ─── Phase 13 Algorithm Generators ──────────────────────────────
 
 
-def fib(n):
-    """Reference Fibonacci."""
+def fib(n: int) -> int:
+    """Compute the reference Fibonacci number."""
     if n <= 0:
         return 0
     a, b = 0, 1
@@ -172,8 +173,9 @@ def fib(n):
     return b
 
 
-def make_fibonacci(n):
-    """Generate a program that computes fib(n).
+def make_fibonacci(n: int) -> tuple[list[Instruction], int]:
+    """
+    Generate a program that computes fib(n).
 
     Algorithm: iterative [counter, a, b] -> SWAP, OVER, ADD -> [counter, b, a+b]
     with ROT to cycle the counter.
@@ -209,7 +211,7 @@ def make_fibonacci(n):
     return prog, fib(n)
 
 
-def make_power_of_2(n):
+def make_power_of_2(n: int) -> tuple[list[Instruction], int]:
     """Generate a program that computes 2^n via repeated doubling."""
     if n == 0:
         return [Instruction(OP_PUSH, 1), Instruction(OP_HALT)], 1
@@ -236,7 +238,7 @@ def make_power_of_2(n):
     return prog, 2**n
 
 
-def make_sum_1_to_n(n):
+def make_sum_1_to_n(n: int) -> tuple[list[Instruction], int]:
     """Generate a program that computes 1 + 2 + ... + n."""
     if n == 0:
         return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
@@ -262,7 +264,7 @@ def make_sum_1_to_n(n):
     return prog, n * (n + 1) // 2
 
 
-def make_multiply(a, b):
+def make_multiply(a: int, b: int) -> tuple[list[Instruction], int]:
     """Generate a program that computes a * b via repeated addition."""
     if b == 0 or a == 0:
         return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
@@ -292,7 +294,7 @@ def make_multiply(a, b):
     return prog, a * b
 
 
-def make_is_even(n):
+def make_is_even(n: int) -> tuple[list[Instruction], int]:
     """Generate a program that returns 1 if n is even, 0 if odd."""
     prog = [
         Instruction(OP_PUSH, n),  # 0: n
@@ -322,7 +324,7 @@ def make_is_even(n):
 # ─── Phase 14 Native-Op Algorithm Generators ─────────────────────
 
 
-def make_native_multiply(a, b):
+def make_native_multiply(a: int, b: int) -> tuple[list[Instruction], int]:
     """Compute a*b using native MUL. 4 instructions."""
     return [
         Instruction(OP_PUSH, a),
@@ -332,7 +334,7 @@ def make_native_multiply(a, b):
     ], a * b
 
 
-def make_native_divmod(a, b):
+def make_native_divmod(a: int, b: int) -> tuple[list[Instruction], int | None]:
     """Compute b/a and b%a. Returns (program, expected_quotient)."""
     if a == 0:
         return [
@@ -349,7 +351,7 @@ def make_native_divmod(a, b):
     ], _trunc_div(b, a)
 
 
-def make_native_remainder(a, b):
+def make_native_remainder(a: int, b: int) -> tuple[list[Instruction], int | None]:
     """Compute b%a using REM_S. Returns (program, expected_remainder)."""
     if a == 0:
         return [
@@ -366,7 +368,7 @@ def make_native_remainder(a, b):
     ], _trunc_rem(b, a)
 
 
-def make_native_is_even(n):
+def make_native_is_even(n: int) -> tuple[list[Instruction], int]:
     """Test parity using native REM_S + JZ."""
     prog = [
         Instruction(OP_PUSH, n),  # 0: n
@@ -381,7 +383,7 @@ def make_native_is_even(n):
     return prog, 1 if n % 2 == 0 else 0
 
 
-def make_factorial(n):
+def make_factorial(n: int) -> tuple[list[Instruction], int]:
     """Compute n! using native MUL."""
     if n <= 1:
         return [Instruction(OP_PUSH, 1), Instruction(OP_HALT)], 1
@@ -410,7 +412,7 @@ def make_factorial(n):
     return prog, expected
 
 
-def make_gcd(a, b):
+def make_gcd(a: int, b: int) -> tuple[list[Instruction], int]:
     """Compute GCD(a, b) via Euclidean algorithm using native REM_S."""
     if a == 0 and b == 0:
         return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
@@ -437,7 +439,7 @@ def make_gcd(a, b):
 # ─── Comparison Program Generators ──────────────────────────────
 
 
-def make_compare_eqz(a):
+def make_compare_eqz(a: int) -> tuple[list[Instruction], int]:
     """Test a == 0 using EQZ."""
     return [
         Instruction(OP_PUSH, a),
@@ -446,9 +448,9 @@ def make_compare_eqz(a):
     ], 1 if a == 0 else 0
 
 
-def make_compare_binary(op, a, b):
-    """Generic binary comparison: PUSH a, PUSH b, OP, HALT."""
-    CMP_SEMANTICS = {
+def make_compare_binary(op: int, a: int, b: int) -> tuple[list[Instruction], int]:
+    """Perform a generic binary comparison: PUSH a, PUSH b, OP, HALT."""
+    cmp_semantics = {
         OP_EQ: lambda va, vb: vb == va,
         OP_NE: lambda va, vb: vb != va,
         OP_LT_S: lambda va, vb: vb < va,
@@ -460,7 +462,7 @@ def make_compare_binary(op, a, b):
         OP_GE_S: lambda va, vb: vb >= va,
         OP_GE_U: lambda va, vb: vb >= va,
     }
-    expected = 1 if CMP_SEMANTICS[op](b, a) else 0
+    expected = 1 if cmp_semantics[op](b, a) else 0
     return [
         Instruction(OP_PUSH, a),
         Instruction(OP_PUSH, b),
@@ -469,7 +471,7 @@ def make_compare_binary(op, a, b):
     ], expected
 
 
-def make_native_max(a, b):
+def make_native_max(a: int, b: int) -> tuple[list[Instruction], int]:
     """Compute max(a, b) using GT_S + JZ."""
     expected = max(a, b)
     prog = [
@@ -489,7 +491,7 @@ def make_native_max(a, b):
     return prog, expected
 
 
-def make_native_abs(n):
+def make_native_abs(n: int) -> tuple[list[Instruction], int]:
     """Compute abs(n) using LT_S comparison + conditional negate."""
     expected = abs(n)
     prog = [
@@ -507,7 +509,7 @@ def make_native_abs(n):
     return prog, expected
 
 
-def make_native_clamp(val, lo, hi):
+def make_native_clamp(val: int, lo: int, hi: int) -> tuple[list[Instruction], int]:
     """Clamp val to [lo, hi] using comparisons."""
     expected = max(lo, min(val, hi))
     prog = [
@@ -534,10 +536,10 @@ def make_native_clamp(val, lo, hi):
 # ─── Bitwise Program Generators ─────────────────────────────────
 
 
-def make_bitwise_binary(op, a, b):
-    """Generic bitwise binary: PUSH a, PUSH b, OP, HALT."""
+def make_bitwise_binary(op: int, a: int, b: int) -> tuple[list[Instruction], int]:
+    """Perform a generic bitwise binary operation: PUSH a, PUSH b, OP, HALT."""
     va, vb = b, a
-    BITWISE_SEMANTICS = {
+    bitwise_semantics = {
         OP_AND: lambda va, vb: _to_i32(va) & _to_i32(vb),
         OP_OR: lambda va, vb: _to_i32(va) | _to_i32(vb),
         OP_XOR: lambda va, vb: _to_i32(va) ^ _to_i32(vb),
@@ -547,7 +549,7 @@ def make_bitwise_binary(op, a, b):
         OP_ROTL: lambda va, vb: _rotl32(vb, va),
         OP_ROTR: lambda va, vb: _rotr32(vb, va),
     }
-    expected = BITWISE_SEMANTICS[op](va, vb)
+    expected = bitwise_semantics[op](va, vb)
     return [
         Instruction(OP_PUSH, a),
         Instruction(OP_PUSH, b),
@@ -556,9 +558,9 @@ def make_bitwise_binary(op, a, b):
     ], expected
 
 
-def make_popcount_loop(n):
+def make_popcount_loop(n: int) -> tuple[list[Instruction], int]:
     """Count set bits of n using AND + SHR_U loop."""
-    expected = bin(n & MASK32).count("1")
+    expected = (n & MASK32).bit_count()
     prog = [
         Instruction(OP_PUSH, 0),  # 0: count = 0
         Instruction(OP_PUSH, n),  # 1: n
@@ -582,7 +584,7 @@ def make_popcount_loop(n):
     return prog, expected
 
 
-def make_bit_extract(n, bit_pos):
+def make_bit_extract(n: int, bit_pos: int) -> tuple[list[Instruction], int]:
     """Extract bit at position bit_pos from n. Result: 0 or 1."""
     expected = (_to_i32(n) >> (bit_pos & 31)) & 1
     prog = [
@@ -599,7 +601,7 @@ def make_bit_extract(n, bit_pos):
 # ─── Chunk 4: Unary + Parametric Program Generators ─────────────
 
 
-def make_native_clz(n):
+def make_native_clz(n: int) -> tuple[list[Instruction], int]:
     """Count leading zeros of n using native CLZ."""
     return [
         Instruction(OP_PUSH, n),
@@ -608,7 +610,7 @@ def make_native_clz(n):
     ], _clz32(n)
 
 
-def make_native_ctz(n):
+def make_native_ctz(n: int) -> tuple[list[Instruction], int]:
     """Count trailing zeros of n using native CTZ."""
     return [
         Instruction(OP_PUSH, n),
@@ -617,8 +619,8 @@ def make_native_ctz(n):
     ], _ctz32(n)
 
 
-def make_native_popcnt(n):
-    """Population count of n using native POPCNT."""
+def make_native_popcnt(n: int) -> tuple[list[Instruction], int]:
+    """Count set bits of n using native POPCNT."""
     return [
         Instruction(OP_PUSH, n),
         Instruction(OP_POPCNT),
@@ -626,8 +628,8 @@ def make_native_popcnt(n):
     ], _popcnt32(n)
 
 
-def make_native_abs_unary(n):
-    """Absolute value using native ABS. 3 instructions."""
+def make_native_abs_unary(n: int) -> tuple[list[Instruction], int]:
+    """Compute absolute value using native ABS. 3 instructions."""
     return [
         Instruction(OP_PUSH, n),
         Instruction(OP_ABS),
@@ -635,8 +637,8 @@ def make_native_abs_unary(n):
     ], abs(int(n))
 
 
-def make_native_neg(n):
-    """Negate n using native NEG. Result is i32-masked (WASM overflow semantics)."""
+def make_native_neg(n: int) -> tuple[list[Instruction], int]:
+    """Negate n using native NEG. The result is i32-masked (WASM overflow semantics)."""
     return [
         Instruction(OP_PUSH, n),
         Instruction(OP_NEG),
@@ -644,8 +646,8 @@ def make_native_neg(n):
     ], (-int(n)) & 0xFFFFFFFF
 
 
-def make_select(a, b, c):
-    """SELECT: push a, b, c; SELECT pops all three -> (c!=0 ? a : b)."""
+def make_select(a: int, b: int, c: int) -> tuple[list[Instruction], int]:
+    """Select: push a, b, c; SELECT pops all three -> (c!=0 ? a : b)."""
     expected = a if c != 0 else b
     return [
         Instruction(OP_PUSH, a),
@@ -656,8 +658,8 @@ def make_select(a, b, c):
     ], expected
 
 
-def make_select_max(a, b):
-    """Max of two numbers using GT_S + SELECT."""
+def make_select_max(a: int, b: int) -> tuple[list[Instruction], int]:
+    """Compute max of two numbers using GT_S + SELECT."""
     expected = max(a, b)
     prog = [
         Instruction(OP_PUSH, a),  # 0
@@ -671,8 +673,8 @@ def make_select_max(a, b):
     return prog, expected
 
 
-def make_log2_floor(n):
-    """Floor of log2(n) using CLZ: 31 - CLZ(n)."""
+def make_log2_floor(n: int) -> tuple[list[Instruction], int]:
+    """Compute floor of log2(n) using CLZ: 31 - CLZ(n)."""
     if n <= 0:
         return [Instruction(OP_PUSH, 0), Instruction(OP_HALT)], 0
     expected = 31 - _clz32(n)
@@ -687,7 +689,7 @@ def make_log2_floor(n):
     return prog, expected
 
 
-def make_is_power_of_2(n):
+def make_is_power_of_2(n: int) -> tuple[list[Instruction], int]:
     """Check if n is a power of 2 using POPCNT."""
     expected = 1 if (n > 0 and _popcnt32(n) == 1) else 0
     prog = [

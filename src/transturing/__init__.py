@@ -1,4 +1,5 @@
-"""LLM-as-Computer: compiled transformer executor.
+"""
+LLM-as-Computer: compiled transformer executor.
 
 Three-layer architecture:
   - core: Zero-dependency ISA, types, programs, assemblers

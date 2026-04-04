@@ -1,4 +1,5 @@
-"""PyTorch-based executor backend for the compiled transformer stack machine.
+"""
+PyTorch-based executor backend for the compiled transformer stack machine.
 
 Contains:
   - DTYPE, EPS: torch-specific constants
@@ -8,6 +9,8 @@ Contains:
   - CompiledModel: full compiled transformer (nn.Module)
   - TorchExecutor: executes programs via CompiledModel
 """
+
+from typing import ClassVar
 
 import torch
 from torch import nn
@@ -98,6 +101,7 @@ from transturing.core.isa import (
     OP_XOR,
     OPCODE_DIM_MAP,
     OPCODE_IDX,
+    Instruction,
     Trace,
     TraceStep,
     _clz32,
@@ -127,14 +131,26 @@ EPS = 1e-6
 class CompiledAttentionHead(nn.Module):
     """Hard-max attention head with analytically set W_Q, W_K, W_V."""
 
-    def __init__(self, d_model=D_MODEL, head_dim=2, v_dim=1, use_bias_q=False):
+    def __init__(
+        self,
+        d_model: int = D_MODEL,
+        head_dim: int = 2,
+        v_dim: int = 1,
+        *,
+        use_bias_q: bool = False,
+    ) -> None:
+        """Initialize attention head with given dimensions."""
         super().__init__()
         self.W_Q = nn.Linear(d_model, head_dim, bias=use_bias_q)
         self.W_K = nn.Linear(d_model, head_dim, bias=False)
         self.W_V = nn.Linear(d_model, v_dim, bias=False)
         self.double()
 
-    def forward(self, query_emb, memory_embs):
+    def forward(
+        self,
+        query_emb: torch.Tensor,
+        memory_embs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, int]:
         """Hard-max attention lookup."""
         if memory_embs.shape[0] == 0:
             return (
@@ -144,13 +160,13 @@ class CompiledAttentionHead(nn.Module):
             )
 
         q = self.W_Q(query_emb)
-        K = self.W_K(memory_embs)
-        V = self.W_V(memory_embs)
+        k = self.W_K(memory_embs)
+        v = self.W_V(memory_embs)
 
-        scores = K @ q
+        scores = k @ q
         best = scores.argmax().item()
 
-        return V[best], scores[best], best
+        return v[best], scores[best], best
 
 
 # ─── Token Vocabulary ──────────────────────────────────────────────
@@ -187,15 +203,16 @@ class TokenVocab:
     BRANCH_TAKEN_ID = 2
     BRANCH_NOT_TAKEN_ID = 3
 
-    _SPECIAL_NAMES = {
+    _SPECIAL_NAMES: ClassVar[dict[int, str]] = {
         PAD_ID: PAD,
         COMMIT_ID: COMMIT,
         BRANCH_TAKEN_ID: BRANCH_TAKEN,
         BRANCH_NOT_TAKEN_ID: BRANCH_NOT_TAKEN,
     }
-    _SPECIAL_IDS = {v: k for k, v in _SPECIAL_NAMES.items()}
+    _SPECIAL_IDS: ClassVar[dict[str, int]] = {v: k for k, v in _SPECIAL_NAMES.items()}
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize token vocabulary mapping."""
         self._opcode_to_tid = {}
         self._tid_to_opcode = {}
         for op_code, idx in OPCODE_IDX.items():
@@ -207,35 +224,44 @@ class TokenVocab:
         self._tid_to_opcode[trap_tid] = OP_TRAP
         self.vocab_size = self.VOCAB_SIZE
 
-    def encode(self, token):
+    _MAX_BYTE_VALUE: ClassVar[int] = 255
+
+    def encode(self, token: str | tuple[str, int]) -> int:  # noqa: C901
         """Encode a token to its vocabulary ID."""
         if isinstance(token, str):
             if token in self._SPECIAL_IDS:
                 return self._SPECIAL_IDS[token]
-            raise ValueError(f"Unknown special token: {token!r}")
+            msg = f"Unknown special token: {token!r}"
+            raise ValueError(msg)
         tag, val = token
         if tag == self.OPCODE:
             if val not in self._opcode_to_tid:
-                raise ValueError(f"Unknown opcode: {val}")
+                msg = f"Unknown opcode: {val}"
+                raise ValueError(msg)
             return self._opcode_to_tid[val]
         if tag == self.VALUE:
-            if not (0 <= val <= 255):
-                raise ValueError(f"Value out of byte range: {val}")
+            if not (0 <= val <= self._MAX_BYTE_VALUE):
+                msg = f"Value out of byte range: {val}"
+                raise ValueError(msg)
             return self._VALUE_BASE + val
         if tag == self.SP_DELTA:
             if not (self._SP_DELTA_MIN <= val <= self._SP_DELTA_MAX):
-                raise ValueError(f"SP delta {val} out of range")
+                msg = f"SP delta {val} out of range"
+                raise ValueError(msg)
             return self._SP_DELTA_BASE + (val - self._SP_DELTA_MIN)
         if tag == self.SPECIAL:
             if val in self._SPECIAL_IDS:
                 return self._SPECIAL_IDS[val]
-            raise ValueError(f"Unknown special token: {val!r}")
-        raise ValueError(f"Unknown token tag: {tag!r}")
+            msg = f"Unknown special token: {val!r}"
+            raise ValueError(msg)
+        msg = f"Unknown token tag: {tag!r}"
+        raise ValueError(msg)
 
-    def decode(self, tid):
+    def decode(self, tid: int) -> tuple[str, int]:
         """Decode a token ID back to its structured representation."""
         if not (0 <= tid < self.vocab_size):
-            raise ValueError(f"Token ID {tid} out of range")
+            msg = f"Token ID {tid} out of range"
+            raise ValueError(msg)
         if tid < self._OPCODE_BASE:
             return (self.SPECIAL, self._SPECIAL_NAMES[tid])
         if tid < self._VALUE_BASE:
@@ -244,60 +270,66 @@ class TokenVocab:
             return (self.VALUE, tid - self._VALUE_BASE)
         return (self.SP_DELTA, (tid - self._SP_DELTA_BASE) + self._SP_DELTA_MIN)
 
-    def compile_embedding(self, d_model=None):
+    def compile_embedding(self, d_model: int | None = None) -> nn.Embedding:
         """Build nn.Embedding with analytically set weights."""
         if d_model is None:
             d_model = D_MODEL
         emb = nn.Embedding(self.vocab_size, d_model)
-        W = torch.zeros(self.vocab_size, d_model, dtype=DTYPE)
+        w = torch.zeros(self.vocab_size, d_model, dtype=DTYPE)
 
-        W[self.COMMIT_ID, DIM_ONE] = 1.0
-        W[self.COMMIT_ID, DIM_OPCODE] = -1.0
-        W[self.BRANCH_TAKEN_ID, DIM_ONE] = 1.0
-        W[self.BRANCH_TAKEN_ID, DIM_OPCODE] = -2.0
-        W[self.BRANCH_NOT_TAKEN_ID, DIM_ONE] = 1.0
-        W[self.BRANCH_NOT_TAKEN_ID, DIM_OPCODE] = -3.0
+        w[self.COMMIT_ID, DIM_ONE] = 1.0
+        w[self.COMMIT_ID, DIM_OPCODE] = -1.0
+        w[self.BRANCH_TAKEN_ID, DIM_ONE] = 1.0
+        w[self.BRANCH_TAKEN_ID, DIM_OPCODE] = -2.0
+        w[self.BRANCH_NOT_TAKEN_ID, DIM_ONE] = 1.0
+        w[self.BRANCH_NOT_TAKEN_ID, DIM_OPCODE] = -3.0
 
         for op_code, tid in self._opcode_to_tid.items():
-            W[tid, DIM_IS_PROG] = 1.0
-            W[tid, DIM_OPCODE] = float(op_code)
-            W[tid, DIM_ONE] = 1.0
+            w[tid, DIM_IS_PROG] = 1.0
+            w[tid, DIM_OPCODE] = float(op_code)
+            w[tid, DIM_ONE] = 1.0
             dim = OPCODE_DIM_MAP.get(op_code)
             if dim is not None and dim < d_model:
-                W[tid, dim] = 1.0
+                w[tid, dim] = 1.0
 
         for v in range(256):
             tid = self._VALUE_BASE + v
-            W[tid, DIM_IS_STACK] = 1.0
-            W[tid, DIM_VALUE] = float(v)
-            W[tid, DIM_ONE] = 1.0
+            w[tid, DIM_IS_STACK] = 1.0
+            w[tid, DIM_VALUE] = float(v)
+            w[tid, DIM_ONE] = 1.0
 
         for delta in range(self._SP_DELTA_MIN, self._SP_DELTA_MAX + 1):
             tid = self._SP_DELTA_BASE + (delta - self._SP_DELTA_MIN)
-            W[tid, DIM_IS_STATE] = 1.0
-            W[tid, DIM_SP] = float(delta)
-            W[tid, DIM_ONE] = 1.0
+            w[tid, DIM_IS_STATE] = 1.0
+            w[tid, DIM_SP] = float(delta)
+            w[tid, DIM_ONE] = 1.0
 
-        emb.weight = nn.Parameter(W, requires_grad=False)
+        emb.weight = nn.Parameter(w, requires_grad=False)
         return emb
 
-    def compile_unembedding(self, embedding=None, d_model=None):
+    def compile_unembedding(
+        self,
+        embedding: nn.Embedding | None = None,
+        d_model: int | None = None,
+    ) -> nn.Linear:
         """Build nn.Linear unembedding head."""
         if d_model is None:
             d_model = D_MODEL
         if embedding is None:
             embedding = self.compile_embedding(d_model)
-        E = embedding.weight.data
+        e = embedding.weight.data
         unembed = nn.Linear(d_model, self.vocab_size, bias=True)
-        norms_sq = (E * E).sum(dim=1)
-        unembed.weight = nn.Parameter(E.clone(), requires_grad=False)
+        norms_sq = (e * e).sum(dim=1)
+        unembed.weight = nn.Parameter(e.clone(), requires_grad=False)
         unembed.bias = nn.Parameter(-0.5 * norms_sq, requires_grad=False)
         return unembed
 
-    def opcode_name(self, op_code):
+    def opcode_name(self, op_code: int) -> str:
+        """Return human-readable name for an opcode."""
         return OP_NAMES.get(op_code, f"?{op_code}")
 
-    def token_name(self, tid):
+    def token_name(self, tid: int) -> str:
+        """Return human-readable name for a token ID."""
         tag, val = self.decode(tid)
         if tag == self.SPECIAL:
             return val
@@ -309,7 +341,8 @@ class TokenVocab:
             return f"SP{'+' if val >= 0 else ''}{val}"
         return f"?{tid}"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """Return string representation of vocabulary."""
         return (
             f"TokenVocab(vocab_size={self.vocab_size}, "
             f"opcodes={len(self._opcode_to_tid)}, values=256, "
@@ -320,7 +353,7 @@ class TokenVocab:
 # ─── Embedding Functions ──────────────────────────────────────────
 
 
-def embed_program_token(pos, instr):
+def embed_program_token(pos: int, instr: Instruction) -> torch.Tensor:
     """Create d_model-dim embedding for a program instruction."""
     emb = torch.zeros(D_MODEL, dtype=DTYPE)
     emb[DIM_IS_PROG] = 1.0
@@ -335,7 +368,7 @@ def embed_program_token(pos, instr):
     return emb
 
 
-def embed_stack_entry(addr, value, write_order):
+def embed_stack_entry(addr: int, value: int, write_order: int) -> torch.Tensor:
     """Create d_model-dim embedding for a stack write record."""
     emb = torch.zeros(D_MODEL, dtype=DTYPE)
     emb[DIM_IS_STACK] = 1.0
@@ -346,7 +379,7 @@ def embed_stack_entry(addr, value, write_order):
     return emb
 
 
-def embed_local_entry(local_idx, value, write_order):
+def embed_local_entry(local_idx: int, value: int, write_order: int) -> torch.Tensor:
     """Create embedding for a local variable write record."""
     emb = torch.zeros(D_MODEL, dtype=DTYPE)
     emb[DIM_IS_LOCAL] = 1.0
@@ -357,7 +390,7 @@ def embed_local_entry(local_idx, value, write_order):
     return emb
 
 
-def embed_heap_entry(addr, value, write_order):
+def embed_heap_entry(addr: int, value: int, write_order: int) -> torch.Tensor:
     """Create embedding for a heap memory write record."""
     emb = torch.zeros(D_MODEL, dtype=DTYPE)
     emb[DIM_IS_HEAP] = 1.0
@@ -368,7 +401,13 @@ def embed_heap_entry(addr, value, write_order):
     return emb
 
 
-def embed_call_frame(depth, ret_addr, saved_sp, locals_base, write_order):
+def embed_call_frame(
+    depth: int,
+    ret_addr: int,
+    saved_sp: int,
+    locals_base: int,
+    write_order: int,
+) -> torch.Tensor:
     """Create embedding for a call stack frame."""
     emb = torch.zeros(D_MODEL, dtype=DTYPE)
     emb[DIM_IS_CALL_STACK] = 1.0
@@ -381,7 +420,7 @@ def embed_call_frame(depth, ret_addr, saved_sp, locals_base, write_order):
     return emb
 
 
-def embed_state(ip, sp):
+def embed_state(ip: int, sp: int) -> torch.Tensor:
     """Create d_model-dim query embedding encoding current execution state."""
     emb = torch.zeros(D_MODEL, dtype=DTYPE)
     emb[DIM_IS_STATE] = 1.0
@@ -397,7 +436,8 @@ def embed_state(ip, sp):
 class CompiledModel(nn.Module):
     """Compiled transformer with 10 attention heads and linear+nonlinear FF dispatch."""
 
-    def __init__(self, d_model=D_MODEL):
+    def __init__(self, d_model: int = D_MODEL) -> None:
+        """Initialize compiled transformer model."""
         nn.Module.__init__(self)
         self.d_model = d_model
 
@@ -427,146 +467,146 @@ class CompiledModel(nn.Module):
 
         self._compile_weights()
 
-    def _compile_weights(self):
+    def _compile_weights(self) -> None:  # noqa: PLR0915
         """Set all weight matrices analytically."""
         with torch.no_grad():
             # ── Head 0: Program opcode fetch ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_IP] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_prog_op.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_PROG_KEY_0] = 1.0
-            W[1, DIM_PROG_KEY_1] = 1.0
-            self.head_prog_op.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_OPCODE] = 1.0
-            self.head_prog_op.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_IP] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_prog_op.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_PROG_KEY_0] = 1.0
+            w[1, DIM_PROG_KEY_1] = 1.0
+            self.head_prog_op.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_OPCODE] = 1.0
+            self.head_prog_op.W_V.weight.copy_(w)
 
             # ── Head 1: Program argument fetch ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_IP] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_prog_arg.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_PROG_KEY_0] = 1.0
-            W[1, DIM_PROG_KEY_1] = 1.0
-            self.head_prog_arg.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            self.head_prog_arg.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_IP] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_prog_arg.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_PROG_KEY_0] = 1.0
+            w[1, DIM_PROG_KEY_1] = 1.0
+            self.head_prog_arg.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            self.head_prog_arg.W_V.weight.copy_(w)
 
             # ── Head 2: Stack read at SP ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_SP] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_stack_a.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_STACK_KEY_0] = 1.0
-            W[1, DIM_STACK_KEY_1] = 1.0
-            self.head_stack_a.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            self.head_stack_a.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_SP] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_stack_a.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_STACK_KEY_0] = 1.0
+            w[1, DIM_STACK_KEY_1] = 1.0
+            self.head_stack_a.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            self.head_stack_a.W_V.weight.copy_(w)
 
             # ── Head 3: Stack read at SP-1 ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_SP] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_stack_b.W_Q.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_SP] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_stack_b.W_Q.weight.copy_(w)
             b = torch.zeros(2)
             b[0] = -1.0
             self.head_stack_b.W_Q.bias.copy_(b)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_STACK_KEY_0] = 1.0
-            W[1, DIM_STACK_KEY_1] = 1.0
-            self.head_stack_b.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            self.head_stack_b.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_STACK_KEY_0] = 1.0
+            w[1, DIM_STACK_KEY_1] = 1.0
+            self.head_stack_b.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            self.head_stack_b.W_V.weight.copy_(w)
 
             # ── Head 4: Stack read at SP-2 ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_SP] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_stack_c.W_Q.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_SP] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_stack_c.W_Q.weight.copy_(w)
             b = torch.zeros(2)
             b[0] = -2.0
             self.head_stack_c.W_Q.bias.copy_(b)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_STACK_KEY_0] = 1.0
-            W[1, DIM_STACK_KEY_1] = 1.0
-            self.head_stack_c.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            self.head_stack_c.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_STACK_KEY_0] = 1.0
+            w[1, DIM_STACK_KEY_1] = 1.0
+            self.head_stack_c.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            self.head_stack_c.W_V.weight.copy_(w)
 
             # ── Head 5: Local value fetch ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_local_val.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_LOCAL_KEY_0] = 1.0
-            W[1, DIM_LOCAL_KEY_1] = 1.0
-            self.head_local_val.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            self.head_local_val.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_local_val.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_LOCAL_KEY_0] = 1.0
+            w[1, DIM_LOCAL_KEY_1] = 1.0
+            self.head_local_val.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            self.head_local_val.W_V.weight.copy_(w)
 
             # ── Head 6: Local address verify ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_local_addr.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_LOCAL_KEY_0] = 1.0
-            W[1, DIM_LOCAL_KEY_1] = 1.0
-            self.head_local_addr.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_LOCAL_KEY_0] = 0.5
-            self.head_local_addr.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_local_addr.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_LOCAL_KEY_0] = 1.0
+            w[1, DIM_LOCAL_KEY_1] = 1.0
+            self.head_local_addr.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_LOCAL_KEY_0] = 0.5
+            self.head_local_addr.W_V.weight.copy_(w)
 
             # ── Head 7: Heap value fetch ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_heap_val.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_HEAP_KEY_0] = 1.0
-            W[1, DIM_HEAP_KEY_1] = 1.0
-            self.head_heap_val.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            self.head_heap_val.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_heap_val.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_HEAP_KEY_0] = 1.0
+            w[1, DIM_HEAP_KEY_1] = 1.0
+            self.head_heap_val.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            self.head_heap_val.W_V.weight.copy_(w)
 
             # ── Head 8: Heap address verify ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_heap_addr.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_HEAP_KEY_0] = 1.0
-            W[1, DIM_HEAP_KEY_1] = 1.0
-            self.head_heap_addr.W_K.weight.copy_(W)
-            W = torch.zeros(1, self.d_model)
-            W[0, DIM_HEAP_KEY_0] = 0.5
-            self.head_heap_addr.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_heap_addr.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_HEAP_KEY_0] = 1.0
+            w[1, DIM_HEAP_KEY_1] = 1.0
+            self.head_heap_addr.W_K.weight.copy_(w)
+            w = torch.zeros(1, self.d_model)
+            w[0, DIM_HEAP_KEY_0] = 0.5
+            self.head_heap_addr.W_V.weight.copy_(w)
 
             # ── Head 9: Call stack read ──
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_VALUE] = 1.0
-            W[1, DIM_ONE] = 1.0
-            self.head_call_stack.W_Q.weight.copy_(W)
-            W = torch.zeros(2, self.d_model)
-            W[0, DIM_CALL_KEY_0] = 1.0
-            W[1, DIM_CALL_KEY_1] = 1.0
-            self.head_call_stack.W_K.weight.copy_(W)
-            W = torch.zeros(3, self.d_model)
-            W[0, DIM_CALL_RET_ADDR] = 1.0
-            W[1, DIM_CALL_SAVED_SP] = 1.0
-            W[2, DIM_CALL_LOCALS_BASE] = 1.0
-            self.head_call_stack.W_V.weight.copy_(W)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_VALUE] = 1.0
+            w[1, DIM_ONE] = 1.0
+            self.head_call_stack.W_Q.weight.copy_(w)
+            w = torch.zeros(2, self.d_model)
+            w[0, DIM_CALL_KEY_0] = 1.0
+            w[1, DIM_CALL_KEY_1] = 1.0
+            self.head_call_stack.W_K.weight.copy_(w)
+            w = torch.zeros(3, self.d_model)
+            w[0, DIM_CALL_RET_ADDR] = 1.0
+            w[1, DIM_CALL_SAVED_SP] = 1.0
+            w[2, DIM_CALL_LOCALS_BASE] = 1.0
+            self.head_call_stack.W_V.weight.copy_(w)
 
             # ── FF dispatch: linear routing ──
             self.M_top[0] = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -673,16 +713,16 @@ class CompiledModel(nn.Module):
                 ),
             )
 
-    def forward(
+    def forward(  # noqa: C901, PLR0913, PLR0912, PLR0915
         self,
-        query_emb,
-        prog_embs,
-        stack_embs=None,
-        local_embs=None,
-        heap_embs=None,
-        call_embs=None,
-        locals_base=0,
-    ):
+        query_emb: torch.Tensor,
+        prog_embs: torch.Tensor,
+        stack_embs: torch.Tensor | None = None,
+        local_embs: torch.Tensor | None = None,
+        heap_embs: torch.Tensor | None = None,
+        call_embs: torch.Tensor | None = None,
+        locals_base: int = 0,
+    ) -> tuple[int, int, int, int, torch.Tensor, int, int, int, int, int]:
         """Execute one step."""
         if stack_embs is None:
             stack_embs = torch.zeros(0, self.d_model, dtype=DTYPE)
@@ -742,7 +782,7 @@ class CompiledModel(nn.Module):
             local_query = torch.zeros(self.d_model, dtype=DTYPE)
             local_query[DIM_VALUE] = float(actual_local_idx)
             local_query[DIM_ONE] = 1.0
-            local_val_raw, _, idx_l = self.head_local_val(local_query, local_embs)
+            local_val_raw, _, _idx_l = self.head_local_val(local_query, local_embs)
             local_addr_raw, _, _ = self.head_local_addr(local_query, local_embs)
             stored_local_addr = round(local_addr_raw[0].item())
             local_val = (
@@ -762,7 +802,7 @@ class CompiledModel(nn.Module):
             heap_query = torch.zeros(self.d_model, dtype=DTYPE)
             heap_query[DIM_VALUE] = float(heap_query_addr)
             heap_query[DIM_ONE] = 1.0
-            heap_val_raw, _, idx_h = self.head_heap_val(heap_query, heap_embs)
+            heap_val_raw, _, _idx_h = self.head_heap_val(heap_query, heap_embs)
             heap_addr_raw, _, _ = self.head_heap_addr(heap_query, heap_embs)
             stored_heap_addr = round(heap_addr_raw[0].item())
             heap_val = (
@@ -867,11 +907,13 @@ class TorchExecutor(ExecutorBackend):
 
     name = "torch"
 
-    def __init__(self, model=None):
+    def __init__(self, model: CompiledModel | None = None) -> None:
+        """Initialize with optional compiled model."""
         self.model = model or CompiledModel()
         self.model.eval()
 
-    def execute(self, prog, max_steps=50000):
+    def execute(self, prog: list[Instruction], max_steps: int = 50000) -> Trace:  # noqa: C901, PLR0912, PLR0915
+        """Execute a program and return the execution trace."""
         trace = Trace(program=prog)
 
         prog_embs = torch.stack(
@@ -892,7 +934,7 @@ class TorchExecutor(ExecutorBackend):
         sp = 0
 
         with torch.no_grad():
-            for step in range(max_steps):
+            for _step in range(max_steps):
                 if ip >= len(prog):
                     break
 
@@ -927,8 +969,8 @@ class TorchExecutor(ExecutorBackend):
                     val_a,
                     val_b,
                     val_c,
-                    local_val,
-                    heap_val,
+                    _local_val,
+                    _heap_val,
                 ) = self.model.forward(
                     query,
                     prog_embs,
@@ -1009,7 +1051,7 @@ class TorchExecutor(ExecutorBackend):
                 elif opcode == OP_LOCAL_GET:
                     stack_embs_list.append(embed_stack_entry(new_sp, top, write_count))
                     write_count += 1
-                elif opcode == OP_LOCAL_SET or opcode == OP_LOCAL_TEE:
+                elif opcode in (OP_LOCAL_SET, OP_LOCAL_TEE):
                     local_embs_list.append(
                         embed_local_entry(locals_base + arg, val_a, local_write_count),
                     )

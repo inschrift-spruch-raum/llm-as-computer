@@ -1,4 +1,5 @@
-"""WAT (WebAssembly Text Format) parser for the stack machine ISA.
+"""
+WAT (WebAssembly Text Format) parser for the stack machine ISA.
 
 Parses a subset of WAT text format and converts it to List[Instruction].
 Focuses on the i32 subset that maps to our existing opcodes.
@@ -28,6 +29,7 @@ References
 """
 
 import re
+import sys
 
 from .assembler import compile_structured
 from .isa import OP_HALT, Instruction
@@ -120,7 +122,8 @@ _KEYWORDS = frozenset(
 
 
 def _tokenize(text: str) -> list[str]:
-    """Tokenize WAT text into a flat list of tokens.
+    """
+    Tokenize WAT text into a flat list of tokens.
 
     Handles:
     - Stripping ;; line comments and (; block comments ;)
@@ -171,13 +174,14 @@ def _tokenize(text: str) -> list[str]:
 def _parse_int(s: str) -> int:
     """Parse a WAT integer literal (decimal or hex, with optional sign)."""
     s = s.replace("_", "")  # WAT allows _ separators
-    if s.startswith("0x") or s.startswith("-0x") or s.startswith("+0x"):
+    if s.startswith(("0x", "-0x", "+0x")):
         return int(s, 16)
     return int(s)
 
 
-def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
-    """Convert flat token list to structured assembler tuples.
+def _tokens_to_structured(tokens: list[str]) -> list[tuple]:  # noqa: C901, PLR0915
+    """
+    Convert flat token list to structured assembler tuples.
 
     This is the core of the parser. It walks the token stream and
     produces tuples compatible with assembler.compile_structured().
@@ -192,7 +196,7 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
     pos = 0
     label_stack = []  # stack of label names for br target resolution
 
-    def _skip_sexpr():
+    def _skip_sexpr() -> None:
         """Skip a complete s-expression (balanced parens)."""
         nonlocal pos
         if tokens[pos] != "(":
@@ -207,7 +211,7 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
                 depth -= 1
             pos += 1
 
-    def _resolve_br_target(target) -> int:
+    def _resolve_br_target(target: str | int) -> int:
         """Resolve a br target: integer index or $label name."""
         if isinstance(target, int):
             return target
@@ -215,9 +219,10 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
         for i, name in enumerate(reversed(label_stack)):
             if name == target:
                 return i
-        raise ValueError(f"Unknown branch label: {target}")
+        msg = f"Unknown branch label: {target}"
+        raise ValueError(msg)
 
-    def _parse_body():
+    def _parse_body() -> None:  # noqa: C901, PLR0912, PLR0915
         """Parse instruction body from current position."""
         nonlocal pos
 
@@ -304,7 +309,7 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
                 nested_ops = []
                 while pos < len(tokens) and tokens[pos] == "(":
                     # Parse nested operand — these go BEFORE the operator
-                    nested_start = len(instrs)
+                    len(instrs)
                     # Recurse into the nested s-expression
                     pos += 1  # skip '('
                     if pos < len(tokens):
@@ -329,7 +334,6 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
                         _parse_instruction(inner2)
                         # Recursively handle deeper nesting
                         while pos < len(tokens) and tokens[pos] == "(":
-                            inner_pos = pos
                             pos += 1
                             if pos < len(tokens):
                                 _parse_instruction(tokens[pos])
@@ -364,7 +368,7 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
             # Linear (non-s-expression) instruction
             _parse_instruction(tok)
 
-    def _parse_instruction(tok: str):
+    def _parse_instruction(tok: str) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915
         """Parse a single instruction token and its arguments."""
         nonlocal pos
         pos += 1  # consume the instruction token
@@ -382,7 +386,8 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
                 val = _parse_int(tokens[pos])
                 pos += 1
             else:
-                raise ValueError("i32.const requires a value argument")
+                msg = "i32.const requires a value argument"
+                raise ValueError(msg)
             instrs.append(("PUSH", val))
             return
 
@@ -406,7 +411,8 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
                 idx = _parse_int(tokens[pos])
                 pos += 1
             else:
-                raise ValueError("call requires a function index")
+                msg = "call requires a function index"
+                raise ValueError(msg)
             instrs.append(("CALL", idx))
             return
 
@@ -490,7 +496,8 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
             ):
                 targets.append(_parse_br_target_raw())
             if len(targets) < 1:
-                raise ValueError("br_table requires at least a default label")
+                msg = "br_table requires at least a default label"
+                raise ValueError(msg)
             default = _resolve_br_target(targets[-1])
             labels = [_resolve_br_target(t) for t in targets[:-1]]
             instrs.append(("BR_TABLE", labels, default))
@@ -520,7 +527,8 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
             instrs.append(("ROT",))
             return
 
-        raise ValueError(f"Unknown WAT instruction: {tok!r}")
+        msg = f"Unknown WAT instruction: {tok!r}"
+        raise ValueError(msg)
 
     def _parse_local_idx() -> int:
         """Parse a local variable index (integer only, named locals not supported)."""
@@ -529,9 +537,10 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
             tok = tokens[pos]
             pos += 1
             return _parse_int(tok)
-        raise ValueError("local.get/set/tee requires an index argument")
+        msg = "local.get/set/tee requires an index argument"
+        raise ValueError(msg)
 
-    def _parse_br_target():
+    def _parse_br_target() -> str | int:
         """Parse a br target: integer depth or $label name."""
         nonlocal pos
         if pos < len(tokens) and tokens[pos] not in ("(", ")"):
@@ -540,9 +549,10 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
             if tok.startswith("$"):
                 return tok
             return _parse_int(tok)
-        raise ValueError("br/br_if requires a target argument")
+        msg = "br/br_if requires a target argument"
+        raise ValueError(msg)
 
-    def _parse_br_target_raw():
+    def _parse_br_target_raw() -> str | int:
         """Parse a br_table target without consuming it from the resolve context."""
         nonlocal pos
         tok = tokens[pos]
@@ -556,7 +566,8 @@ def _tokens_to_structured(tokens: list[str]) -> list[tuple]:
 
 
 def parse_wat(text: str, *, append_halt: bool = True) -> list[Instruction]:
-    """Parse WAT text and return a flat List[Instruction].
+    """
+    Parse WAT text and return a flat List[Instruction].
 
     Args:
         text: WAT source code (module, function, or bare instructions).
@@ -572,7 +583,7 @@ def parse_wat(text: str, *, append_halt: bool = True) -> list[Instruction]:
             i32.const 5
             i32.add
         ''')
-        # -> [Instruction(1, 3), Instruction(1, 5), Instruction(3, 0), Instruction(5, 0)]
+        # -> [Instruction(1,3), Instruction(1,5), Instruction(3,0), Instruction(5,0)]
 
     Example with function wrapper::
 
@@ -583,7 +594,7 @@ def parse_wat(text: str, *, append_halt: bool = True) -> list[Instruction]:
               i32.add
             )
         ''')
-        # -> [Instruction(43, 0), Instruction(43, 1), Instruction(3, 0), Instruction(5, 0)]
+        # -> [Instruction(43,0), Instruction(43,1), Instruction(3,0), Instruction(5,0)]
 
     """
     tokens = _tokenize(text)
@@ -604,7 +615,7 @@ def parse_wat(text: str, *, append_halt: bool = True) -> list[Instruction]:
         flat = compile_structured(structured)
     else:
         # No control flow — use isa.program() directly
-        from .isa import program as _prog
+        from .isa import program as _prog  # noqa: PLC0415
 
         flat = _prog(*structured)
 
@@ -621,19 +632,15 @@ if __name__ == "__main__":
     from .isa import OP_ADD, OP_LOCAL_GET, OP_PUSH
     from .isa import program as _prog
 
-    print("=== WAT Parser Self-Test ===\n")
     passed = 0
     failed = 0
 
-    def check(name, got, expected):
-        global passed, failed
+    def check(_name: str, got: object, expected: object) -> None:
+        """Assert test result matches expected value."""
+        global passed, failed  # noqa: PLW0603
         if got == expected:
-            print(f"  PASS: {name}")
             passed += 1
         else:
-            print(f"  FAIL: {name}")
-            print(f"    expected: {expected}")
-            print(f"    got:      {got}")
             failed += 1
 
     # Test 1: Basic arithmetic
@@ -680,7 +687,7 @@ if __name__ == "__main__":
           i32.const 99
         end
     """)
-    check("block/br_if produces instructions", len(prog) > 0, True)
+    check("block/br_if produces instructions", len(prog) > 0, expected=True)
 
     # Test 6: Loop
     prog = parse_wat("""
@@ -692,7 +699,7 @@ if __name__ == "__main__":
           br_if 0
         end
     """)
-    check("loop/br_if produces instructions", len(prog) > 0, True)
+    check("loop/br_if produces instructions", len(prog) > 0, expected=True)
 
     # Test 7: drop -> POP
     prog = parse_wat("i32.const 1 i32.const 2 drop", append_halt=False)
@@ -748,7 +755,7 @@ if __name__ == "__main__":
           end
         end
     """)
-    check("named labels parse", len(prog) > 0, True)
+    check("named labels parse", len(prog) > 0, expected=True)
 
     # Test 14: if/else/end
     prog = parse_wat("""
@@ -759,7 +766,7 @@ if __name__ == "__main__":
           i32.const 20
         end
     """)
-    check("if/else/end parses", len(prog) > 0, True)
+    check("if/else/end parses", len(prog) > 0, expected=True)
 
     # Test 15: br_table
     prog = parse_wat("""
@@ -770,9 +777,7 @@ if __name__ == "__main__":
           end
         end
     """)
-    check("br_table parses", len(prog) > 0, True)
+    check("br_table parses", len(prog) > 0, expected=True)
 
-    print(f"\n{passed} passed, {failed} failed")
     if failed:
-        exit(1)
-    print("All tests passed!")
+        sys.exit(1)

@@ -1,14 +1,16 @@
 """Pytest configuration: auto-skip missing backends."""
 
-
 import pytest
 
 
-def pytest_collection_modifyitems(config, items):
+def pytest_collection_modifyitems(
+    config: pytest.Config,  # noqa: ARG001
+    items: list[pytest.Item],
+) -> None:
     """Auto-mark tests requiring unavailable backends."""
     # Check numpy availability
     try:
-        import numpy
+        import numpy as np  # noqa: F401, PLC0415
     except ImportError:
         for item in items:
             if "numpy" in item.nodeid.lower() or "np_exec" in item.fixturenames:
@@ -16,7 +18,7 @@ def pytest_collection_modifyitems(config, items):
 
     # Check torch availability
     try:
-        import torch
+        import torch  # noqa: F401, PLC0415
     except ImportError:
         for item in items:
             if "torch" in item.nodeid.lower() or "pt_exec" in item.fixturenames:

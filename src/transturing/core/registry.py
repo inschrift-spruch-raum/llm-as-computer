@@ -10,13 +10,14 @@ _LOADED: set = set()
 
 
 def register_backend(cls: type["ExecutorBackend"]) -> type["ExecutorBackend"]:
-    """Decorator to register a backend class."""
+    """Register a backend class via decorator."""
     _REGISTRY[cls.name] = cls  # type: ignore[attr-defined]
     return cls
 
 
 def get_executor(name: str | None = None) -> "ExecutorBackend":
-    """Get an executor instance.
+    """
+    Get an executor instance.
 
     Args:
         name: Backend name ('numpy' or 'torch').
@@ -28,10 +29,12 @@ def get_executor(name: str | None = None) -> "ExecutorBackend":
         for preferred in ("torch", "numpy"):
             if preferred in _REGISTRY:
                 return _REGISTRY[preferred]()
-        raise RuntimeError("No executor backend available. Install numpy or torch.")
+        msg = "No executor backend available. Install numpy or torch."
+        raise RuntimeError(msg)
     if name not in _REGISTRY:
+        msg = f"Backend '{name}' not available. Installed: {list(_REGISTRY.keys())}"
         raise ValueError(
-            f"Backend '{name}' not available. Installed: {list(_REGISTRY.keys())}",
+            msg,
         )
     return _REGISTRY[name]()
 
