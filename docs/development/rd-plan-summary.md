@@ -10,7 +10,7 @@
 
 ## 环境
 
-CPU-only，Python 3.12，PyTorch + NumPy，无需 GPU。抛物线编码做内存寻址，hard-max（argmax）做注意力选择，float64 保证数值精度。
+CPU-only，Python 3.14，PyTorch + NumPy，无需 GPU。抛物线编码做内存寻址，hard-max（argmax）做注意力选择，float64 保证数值精度。
 
 ## 阶段总览
 

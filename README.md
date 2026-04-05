@@ -1,37 +1,43 @@
 # transturing
 
-A compiled transformer executor that runs programs inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head — no external interpreter, no tool use. The transformer *is* the computer.
+一个**编译型 transformer 执行器**：程序直接运行在 transformer 自身的推理循环中。每一次取指和每一次内存读取，都是一个抛物线注意力头——没有外部解释器，也没有工具调用。transformer **就是** 这台计算机。
 
-Built to independently validate [Percepta's claim](https://percepta.ai/blog/can-llms-be-computers) that transformers can execute arbitrary programs via 2D convex hull attention with O(log t) per-step decoding.
+本项目用于独立验证 [Percepta 的论断](https://percepta.ai/blog/can-llms-be-computers)：transformer 能否通过 2D 凸包注意力，以每步 `O(log t)` 的复杂度执行任意程序。
 
-## Blog Posts
+## 相关博文
 
-- **[Yes, LLMs Can Be Computers. Now What?](https://muninn.austegard.com/blog/yes-llms-can-be-computers-now-what)** — Full narrative of the 13-phase validation, including a productive wrong turn through training.
-- **[The Free Computer: Why Offloading to CPU Is a Win for Everyone](https://muninn.austegard.com/blog/the-free-computer-why-offloading-to-cpu-is-a-win-for-everyone)** — The economic argument for compiled CPU execution.
+- **[Yes, LLMs Can Be Computers. Now What?](https://muninn.austegard.com/blog/yes-llms-can-be-computers-now-what)** —— 13 个阶段验证过程的完整叙述，包括一次虽走弯路但很有价值的训练尝试。
+- **[The Free Computer: Why Offloading to CPU Is a Win for Everyone](https://muninn.austegard.com/blog/the-free-computer-why-offloading-to-cpu-is-a-win-for-everyone)** —— 关于编译型 CPU 执行路径的经济学论证。
 
-## How It Works
+## 工作原理
 
-New to this? **[How It Works](docs/guides/how-it-works.md)** walks through a 4-instruction program step by step, showing why this isn't just a regular interpreter with extra steps. The short version: every memory read is a dot product and an argmax — the same attention mechanism that runs in every transformer.
+如果你是第一次接触这个项目，建议先看 **[How It Works](docs/guides/how-it-works.md)**。它会逐步演示一个 4 指令程序的执行过程，说明为什么这不是“套了壳的普通解释器”。
 
-## Documentation
+简短版本是：每一次内存读取，本质上都是一次点积加一次 `argmax`——也就是 transformer 在日常推理中本来就在做的那套注意力机制。
 
-Full documentation is in the [docs/](docs/) directory:
+## 文档
 
-- **[Quick Start](docs/quickstart.md)** — Get running in 5 minutes
-- **[How It Works](docs/guides/how-it-works.md)** — Step-by-step walkthrough of a 4-instruction program
-- **[Architecture](docs/architecture/overview.md)** — System design and key concepts
-- **[ISA Reference](docs/isa/index.md)** — Complete 55-opcode reference
-- **[Development](docs/development/findings-summary.md)** — Research findings and R&D plan
+完整文档位于 [docs/](docs/) 目录：
 
-## Benchmark Results
+- **[Quick Start](docs/quickstart.md)** —— 5 分钟跑起来
+- **[How It Works](docs/guides/how-it-works.md)** —— 4 指令程序的逐步执行演示
+- **[Architecture](docs/architecture/overview.md)** —— 系统设计与核心概念
+- **[ISA Reference](docs/isa/index.md)** —— 完整的 55 操作码参考
+- **[Development](docs/development/findings-summary.md)** —— 研究发现与研发路线
 
-Million-step benchmarks validating the executor at scale: [Issue #52](https://github.com/oaustegard/transturing/issues/52#issuecomment-2752773503). Key numbers: Python at **2.1–3.1M steps/sec**, 1.2M steps in 561ms.
+## 基准结果
 
-## ISA Reference
+百万步级别的执行基准见：[Issue #52](https://github.com/oaustegard/transturing/issues/52#issuecomment-2752773503)。
 
-The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's i32 instruction subset. All operations are compiled into transformer weight matrices — the feed-forward layers dispatch opcodes, and attention heads handle memory addressing via parabolic key encoding.
+关键数据：Python 执行速度 **2.1–3.1M steps/sec**，120 万步执行时间约 561ms。
 
-### Stack Operations
+## ISA 参考
+
+该执行器实现了一套 55 操作码的栈机 ISA，以 WebAssembly 的 i32 指令子集为蓝本。
+
+更准确地说：**通用执行器**的分发与寻址机制通过解析方式固定到模型结构中；而**具体程序**会被编译为 ISA 指令序列，再由这个执行器运行。前馈层负责操作码分发，注意力头则通过抛物线键编码完成内存寻址。
+
+### 栈操作
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -43,7 +49,7 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 12 | ROT | Rotate top three elements (a b c → b c a) | Three-value shuffling, e.g. Fibonacci iteration |
 | 42 | SELECT | Pop three; push b if c≠0, else a | Branchless conditional — like C's ternary `?:` |
 
-### Arithmetic
+### 算术
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -57,7 +63,7 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 40 | ABS | Absolute value | `abs(x)` — flips sign if negative |
 | 41 | NEG | Negate | Unary minus: `0 - x` |
 
-### Comparison
+### 比较
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -73,7 +79,7 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 27 | GE_S | Signed greater-or-equal | Signed `>=` |
 | 28 | GE_U | Unsigned greater-or-equal | Unsigned `>=` |
 
-### Bitwise
+### 位运算
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -89,7 +95,7 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 38 | CTZ | Count trailing zeros | Finding lowest set bit |
 | 39 | POPCNT | Population count | Counting set bits — Hamming weight |
 
-### Control Flow
+### 控制流
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -101,7 +107,7 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 55 | RETURN | Pop return address, jump back | Function return |
 | 99 | TRAP | Illegal operation (runtime error) | Error signaling — division by zero, stack underflow |
 
-### Local Variables
+### 局部变量
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -109,7 +115,7 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 44 | LOCAL.SET *i* | Pop stack into local variable *i* | Writing a named variable |
 | 45 | LOCAL.TEE *i* | Copy top of stack into local *i* (no pop) | Write + keep — avoids DUP before SET |
 
-### Linear Memory
+### 线性内存
 
 | Opcode | Name | Description | Computing context |
 |--------|------|-------------|-------------------|
@@ -122,26 +128,49 @@ The executor implements a 55-opcode stack machine ISA, modeled on WebAssembly's 
 | 52 | I32.STORE8 | Truncate to byte and store | Writing bytes to memory |
 | 53 | I32.STORE16 | Truncate to 16 bits and store | Writing shorts to memory |
 
-## Files
+## 文件结构
 
-### Core (`src/transturing/`)
-```
-src/transturing/isa.py       ISA definition: 55 opcodes, types, embedding layout
-src/transturing/executor.py  NumPy + PyTorch compiled transformer executors
-src/transturing/programs.py  Test programs and algorithm generators
-src/transturing/assembler.py WASM-style structured control flow → flat ISA compiler
-src/transturing/wat_parser.py WebAssembly text format parser
-src/transturing/c_pipeline.py C → WAT → ISA compilation pipeline
-```
-
-### Tests
-```
-tests/test_consolidated.py    Executor correctness + dual-backend consistency tests
-tests/test_wat_parser.py      WAT parser test suite
+### Core (`src/transturing/core/`)
+```text
+core/isa.py            ISA 定义：55 个操作码、DIM 常量、数学辅助函数、Trace 类型
+core/abc.py            ExecutorBackend 抽象基类
+core/registry.py       后端发现（get_executor, list_backends）
+core/programs.py       测试程序与算法生成器
+core/assembler.py      WASM 风格结构化控制流 → 扁平 ISA 编译器
+core/wat_parser.py     WebAssembly 文本格式解析器
+core/c_pipeline.py     C → WAT → ISA 编译流程（依赖 clang + wasm2wat）
 ```
 
-### Other
+### Backends (`src/transturing/backends/`)
+```text
+backends/numpy_backend.py  NumPyExecutor（参考/演示实现）
+backends/torch_backend.py  CompiledAttentionHead、TokenVocab、CompiledModel、TorchExecutor
 ```
-docs/                   Full documentation (quickstart, architecture, ISA ref)
-AGENTS.md               Project instructions for OpenCode
+
+### 用法
+```python
+# 顶层便捷导入（推荐）：
+from transturing import program, get_executor, Instruction
+
+# 直接模块导入：
+from transturing.core.isa import OP_PUSH, OP_ADD, OP_HALT
+
+# 后端专用：
+from transturing.backends.torch_backend import TorchExecutor, CompiledModel
+
+# 通过注册表使用（推荐）：
+exec_np = get_executor('numpy')
+exec_pt = get_executor('torch')
+```
+
+### 测试
+```text
+tests/test_consolidated.py    执行器正确性 + 双后端一致性测试
+tests/test_wat_parser.py      WAT 解析器测试套件
+```
+
+### 其他
+```text
+docs/                   完整文档（quickstart、architecture、ISA 参考等）
+AGENTS.md               面向 OpenCode 的项目级代理说明
 ```

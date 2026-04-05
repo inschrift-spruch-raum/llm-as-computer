@@ -146,15 +146,15 @@ So why would anyone want this? Because:
 
 2. **It runs inside the model.** No tool calls, no sandboxed interpreter, no context switch. The transformer plans a computation and executes it in the same forward pass.
 
-3. **Programs become weights.** The 55-opcode ISA compiles into 964 parameters. A program isn't text that gets interpreted — it's weight matrices that get multiplied. Deployment is `model.load_state_dict()`.
+3. **The executor becomes model structure; programs become executable inputs.** The 55-opcode ISA defines what the compiled executor can run. In the current repo, the universal executor is compiled into the model structure, while a concrete program is passed in as `Instruction` data (and in the Torch backend, encoded as program-memory embeddings), not as a brand-new set of model parameters for each program.
 
 The naive version is slower than a regular interpreter. The structured version (with convex hull search) scales to millions of steps on a CPU. The important thing isn't speed — it's that the execution lives inside the attention mechanism, making it composable with everything else transformers do.
 
 ## Try it yourself
 
 ```python
-from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from transturing.backends.numpy_backend import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 3),

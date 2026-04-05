@@ -4,7 +4,7 @@
 
 ## 概述
 
-这套 ISA 驱动着整个"transformer 即计算机"系统。所有指令都被**编译进 transformer 的权重矩阵**，而不是由外部解释器逐条执行。前馈层负责指令分发，注意力头则通过抛物线键编码 (parabolic key encoding) 完成内存寻址。每一步执行本质上就是一次 dot product 加一次 argmax，跟标准 transformer 推理中的注意力机制完全一致。
+这套 ISA 驱动着整个"transformer 即计算机"系统。更准确地说：**所有指令类型的分发/执行机制**被解析式固定到执行器结构中，而具体程序则以 ISA 指令序列的形式输入执行器，而不是每个程序都单独编译成一套新的模型参数。前馈层负责指令分发，注意力头则通过抛物线键编码 (parabolic key encoding) 完成内存寻址。每一步执行本质上就是一次 dot product 加一次 argmax，跟标准 transformer 推理中的注意力机制完全一致。
 
 ### 栈机器架构
 

@@ -1,21 +1,118 @@
 # API 参考
 
-核心 Python 类和函数的接口文档。所有类分布在两个模块中：`src/transturing/isa.py`（ISA 定义、词表、注意力头、嵌入函数、测试工具）和 `src/transturing/executor.py`（两种执行器和编译模型）。
+核心 Python 类和函数的接口文档。项目分为两层子包：`src/transturing/core/`（零依赖核心：ISA 定义、类型、后端抽象、测试工具）和 `src/transturing/backends/`（隔离的后端实现：NumPy 和 PyTorch）。
 
-> **模块依赖链：** `transturing.isa` ← `transturing.executor` ← `transturing.programs` ← `transturing.assembler` ← `transturing.wat_parser` ← `transturing.c_pipeline`
+> **模块依赖图：** `core/isa.py` 是共享根模块。`programs.py` 和 `assembler.py` 均从 `isa.py` 导入。`wat_parser.py` 从 `isa.py` 和 `assembler.py` 导入。`c_pipeline.py` 从 `isa.py` 和 `wat_parser.py` 导入。后端通过 `from transturing.core.isa import ...` 引用核心模块。
 
 ## 导入示例
 
 ```python
-from transturing.isa import (
-    program, Instruction, Trace, TraceStep,
-    TokenVocab, CompiledAttentionHead,
-    embed_program_token, embed_stack_entry, embed_state,
-    compare_traces, test_algorithm, test_trap_algorithm,
-    D_MODEL, DTYPE, EPS,
+# 顶层便捷导入（推荐）:
+from transturing import (
+    D_MODEL, MASK32, N_OPCODES, TOKENS_PER_STEP,
+    Instruction, Trace, TraceStep,
+    compare_traces, get_executor, list_backends,
+    program, test_algorithm, test_trap_algorithm,
 )
 
-from transturing.executor import NumPyExecutor, TorchExecutor, CompiledModel
+# 后端注册表（推荐用于用户代码）:
+exec_np = get_executor('numpy')   # 返回 NumPyExecutor
+exec_pt = get_executor('torch')   # 返回 TorchExecutor
+
+# 直接后端导入:
+from transturing.backends.numpy_backend import NumPyExecutor
+from transturing.backends.torch_backend import (
+    TorchExecutor, CompiledModel, CompiledAttentionHead,
+    TokenVocab, DTYPE, EPS,
+    embed_program_token, embed_stack_entry, embed_state,
+    embed_local_entry, embed_heap_entry, embed_call_frame,
+)
+
+# 核心模块导入:
+from transturing.core.isa import OP_PUSH, OP_ADD, OP_HALT, MASK32
+from transturing.core.assembler import compile_structured
+from transturing.core.wat_parser import parse_wat
+from transturing.core.programs import make_fibonacci, make_factorial
+from transturing.core.abc import ExecutorBackend
+from transturing.core.registry import get_executor, list_backends, register_backend
+```
+
+---
+
+## 后端抽象与注册表
+
+### ExecutorBackend
+
+所有执行器后端的抽象基类，定义在 `core/abc.py` 中。`NumPyExecutor` 和 `TorchExecutor` 都实现此接口。
+
+**所在文件：** `src/transturing/core/abc.py`
+
+```python
+from transturing.core.abc import ExecutorBackend
+```
+
+```python
+class ExecutorBackend(ABC):
+    name: str  # 类级常量，标识后端（如 'numpy'、'torch'）
+
+    @abstractmethod
+    def execute(self, prog: list[Instruction], max_steps: int = 50000) -> Trace:
+        """执行程序并返回完整轨迹。"""
+```
+
+### get_executor(name=None)
+
+获取执行器实例的工厂函数。
+
+**所在文件：** `src/transturing/core/registry.py`
+
+```python
+from transturing import get_executor
+
+# 自动选择（优先 torch > numpy）:
+exec = get_executor()
+
+# 指定后端:
+exec_np = get_executor('numpy')
+exec_pt = get_executor('torch')
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `name` | `str \| None` | 后端名称（`'numpy'` 或 `'torch'`）。`None` 时按 torch > numpy 优先级自动选择 |
+
+**返回：** `ExecutorBackend` 实例。
+
+不可用时抛出 `RuntimeError` 或 `ValueError`。
+
+### list_backends()
+
+列出当前可用的后端名称。
+
+**所在文件：** `src/transturing/core/registry.py`
+
+```python
+from transturing import list_backends
+
+print(list_backends())
+# → ['torch', 'numpy']
+```
+
+**返回：** `list[str]`
+
+### register_backend(cls)
+
+装饰器，用于注册新的后端类。
+
+**所在文件：** `src/transturing/core/registry.py`
+
+```python
+from transturing.core.registry import register_backend
+
+@register_backend
+class MyExecutor(ExecutorBackend):
+    name = "my_backend"
+    ...
 ```
 
 ---
@@ -24,12 +121,12 @@ from transturing.executor import NumPyExecutor, TorchExecutor, CompiledModel
 
 ### NumPyExecutor
 
-纯 NumPy 实现的编译执行器。直接操作浮点数组，不依赖 PyTorch。所有操作码的分发逻辑内联在一个 `execute` 方法中。
+纯 NumPy 实现的编译执行器。直接操作浮点数组，不依赖 PyTorch。所有操作码的分发逻辑内联在一个 `execute` 方法中，通过 `_ParabolicStore` 和 `_ExecCtx` 管理执行状态。
 
-**所在文件：** `src/transturing/executor.py`
+**所在文件：** `src/transturing/backends/numpy_backend.py`
 
 ```python
-from transturing.executor import NumPyExecutor
+from transturing.backends.numpy_backend import NumPyExecutor
 
 exec_np = NumPyExecutor()
 trace = exec_np.execute(prog, max_steps=50000)
@@ -48,11 +145,16 @@ trace = exec_np.execute(prog, max_steps=50000)
 
 执行过程中维护五个独立的内存空间，各自使用抛物线编码进行寻址：
 
+- **程序内存**（program）：指令取指
 - **栈内存**（stack）：栈顶 SP 及偏移读写
 - **局部变量**（locals）：LOCAL.GET/SET/TEE 的变量空间
 - **堆内存**（heap）：I32.LOAD/STORE 线性内存
 - **调用栈**（call stack）：CALL/RETURN 保存返回地址和 SP
-- **程序内存**（program）：指令取指
+
+内部实现细节：
+
+- **`_ParabolicStore`**：抛物线键值存储，支持 `write(addr, val)` 和 `read(addr)` 操作，使用 `eps=1e-10` 实现近因偏好
+- **`_ExecCtx`**：执行上下文，封装栈、局部变量、堆、调用栈、IP、SP 等状态
 
 ---
 
@@ -60,10 +162,10 @@ trace = exec_np.execute(prog, max_steps=50000)
 
 基于 PyTorch 的执行器，使用 `CompiledModel`（`nn.Module`）执行每一步。内部将程序、栈、局部变量、堆、调用栈编码为嵌入向量，调用模型的 `forward` 方法完成单步计算。
 
-**所在文件：** `src/transturing/executor.py`
+**所在文件：** `src/transturing/backends/torch_backend.py`
 
 ```python
-from transturing.executor import TorchExecutor
+from transturing.backends.torch_backend import TorchExecutor
 
 exec_pt = TorchExecutor()
 trace = exec_pt.execute(prog, max_steps=50000)
@@ -79,7 +181,12 @@ trace = exec_pt.execute(prog, max_steps=50000)
 
 参数和返回值与 `NumPyExecutor.execute` 完全一致。
 
-执行流程：先将程序编译为嵌入矩阵，然后在 `torch.no_grad()` 上下文中循环调用 `CompiledModel.forward()`，直到遇到 HALT 或达到步数上限。
+执行流程：先将程序**编码**为嵌入矩阵，然后在 `torch.no_grad()` 上下文中循环调用 `CompiledModel.forward()`，直到遇到 HALT 或达到步数上限。
+
+内部实现细节：
+
+- **`_ForwardResult`**：`forward()` 返回的命名元组，包含 opcode、arg、sp_delta、top、val_a/b/c 等字段
+- **`_ExecState`**：运行时执行状态，追踪栈/局部变量/堆/调用栈的嵌入矩阵和写计数
 
 ---
 
@@ -88,8 +195,9 @@ trace = exec_pt.execute(prog, max_steps=50000)
 项目中所有测试都要求 NumPy 和 PyTorch 两个执行器产生**完全相同**的轨迹。用 `compare_traces()` 进行逐令牌比对。
 
 ```python
-from transturing.isa import program, compare_traces, test_algorithm
-from transturing.executor import NumPyExecutor, TorchExecutor
+from transturing import program, compare_traces
+from transturing.backends.numpy_backend import NumPyExecutor
+from transturing.backends.torch_backend import TorchExecutor
 
 np_exec = NumPyExecutor()
 pt_exec = TorchExecutor()
@@ -110,12 +218,12 @@ print(f"一致: {match}, 详情: {detail}")
 
 ### CompiledModel
 
-继承 `torch.nn.Module` 的编译型 transformer。所有权重通过 `_compile_weights()` 解析设定，不经过训练。10 个注意力头分工明确，前馈层由线性路由矩阵加非线性覆盖组成。
+继承 `torch.nn.Module` 的编译型 transformer。所有权重通过 `_compile_weights()` 解析设定，不经过训练。10 个注意力头分工明确，前馈层由线性路由矩阵加运行时非线性语义计算组成。这里编译的是**通用执行器**，而不是每个具体程序各自的一套模型参数。
 
-**所在文件：** `src/transturing/executor.py`
+**所在文件：** `src/transturing/backends/torch_backend.py`
 
 ```python
-from transturing.executor import CompiledModel
+from transturing.backends.torch_backend import CompiledModel
 
 model = CompiledModel(d_model=51)
 model.eval()
@@ -131,24 +239,28 @@ model.eval()
 
 **10 个注意力头：**
 
-| 编号 | 名称 | 功能 | v_dim |
-|------|------|------|-------|
-| 0 | `head_prog_op` | 取指令操作码 | 1 |
-| 1 | `head_prog_arg` | 取指令参数 | 1 |
-| 2 | `head_stack_a` | 读栈顶 SP | 1 |
-| 3 | `head_stack_b` | 读栈 SP-1 | 1 |
-| 4 | `head_stack_c` | 读栈 SP-2 | 1 |
-| 5 | `head_local_val` | 取局部变量值 | 1 |
-| 6 | `head_local_addr` | 验证局部变量地址 | 1 |
-| 7 | `head_heap_val` | 取堆内存值 | 1 |
-| 8 | `head_heap_addr` | 验证堆内存地址 | 1 |
-| 9 | `head_call_stack` | 读取调用栈帧 | 3 |
+| 编号 | 名称 | 功能 | v_dim | 备注 |
+|------|------|------|-------|------|
+| 0 | `head_prog_op` | 取指令操作码 | 1 | |
+| 1 | `head_prog_arg` | 取指令参数 | 1 | |
+| 2 | `head_stack_a` | 读栈顶 SP | 1 | |
+| 3 | `head_stack_b` | 读栈 SP-1 | 1 | W_Q 使用偏置 |
+| 4 | `head_stack_c` | 读栈 SP-2 | 1 | W_Q 使用偏置 |
+| 5 | `head_local_val` | 取局部变量值 | 1 | |
+| 6 | `head_local_addr` | 验证局部变量地址 | 1 | |
+| 7 | `head_heap_val` | 取堆内存值 | 1 | |
+| 8 | `head_heap_addr` | 验证堆内存地址 | 1 | |
+| 9 | `head_call_stack` | 读取调用栈帧 | 3 | v_dim=3（ret_addr, saved_sp, locals_base） |
 
 **前馈分发：**
-- `M_top`：线性路由矩阵，形状 `(N_OPCODES, 6)`
-- `sp_deltas`：每个操作码对应的栈指针偏移量
+- `M_top`：线性路由矩阵，形状 `(55, 6)`，注册为 buffer
+- `sp_deltas`：每个操作码对应的栈指针偏移量，形状 `(55,)`，注册为 buffer
 
-#### forward(query_emb, prog_embs, stack_embs, local_embs=None, heap_embs=None, call_embs=None, locals_base=0)
+**参数统计：**
+- `nn.Parameter` 总量：2656
+- 含 buffer 总量：3041
+
+#### forward(query_emb, prog_embs, mem, locals_base=0)
 
 执行单步推理。
 
@@ -156,13 +268,10 @@ model.eval()
 |------|------|------|
 | `query_emb` | `Tensor (D,)` | 当前状态的查询嵌入（由 `embed_state` 生成） |
 | `prog_embs` | `Tensor (N_prog, D)` | 程序指令嵌入矩阵 |
-| `stack_embs` | `Tensor (N_stack, D)` | 栈写入记录嵌入 |
-| `local_embs` | `Tensor (N_local, D) \| None` | 局部变量嵌入 |
-| `heap_embs` | `Tensor (N_heap, D) \| None` | 堆内存嵌入 |
-| `call_embs` | `Tensor (N_call, D) \| None` | 调用栈嵌入 |
+| `mem` | `_MemoryEmbs` | 命名元组，包含 stack、local、heap、call 嵌入 |
 | `locals_base` | `int` | 当前局部变量的基地址偏移 |
 
-**返回：** 10 元组 `(opcode, arg, sp_delta, top, opcode_one_hot, val_a, val_b, val_c, local_val, heap_val)`
+**返回：** `_ForwardResult`，包含以下字段：
 
 | 返回值 | 类型 | 说明 |
 |--------|------|------|
@@ -170,12 +279,9 @@ model.eval()
 | `arg` | `int` | 当前指令参数 |
 | `sp_delta` | `int` | 栈指针变化量 |
 | `top` | `int` | 执行后的栈顶值 |
-| `opcode_one_hot` | `Tensor` | 操作码的 one-hot 编码 |
 | `val_a` | `int` | 栈[SP] 的值 |
 | `val_b` | `int` | 栈[SP-1] 的值 |
 | `val_c` | `int` | 栈[SP-2] 的值 |
-| `local_val` | `int` | 局部变量值 |
-| `heap_val` | `int` | 堆内存值 |
 
 ---
 
@@ -185,10 +291,10 @@ model.eval()
 
 固定词表类。覆盖执行轨迹中出现的所有令牌类型，提供编码/解码和编译嵌入表的功能。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/backends/torch_backend.py`
 
 ```python
-from transturing.isa import TokenVocab
+from transturing.backends.torch_backend import TokenVocab
 
 vocab = TokenVocab()
 print(vocab)
@@ -262,7 +368,7 @@ vocab.token_name(102)   # → "V42"
 
 硬最大值（hard-max）注意力头，权重解析设定。这是整个系统的核心计算单元，用于所有内存空间的寻址。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/backends/torch_backend.py`
 
 计算过程：
 
@@ -314,10 +420,10 @@ output = V[argmax(scores)]       → (v_dim,)
 
 快速构建指令列表的便捷函数。接受元组形式的指令描述，返回 `List[Instruction]`。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/core/isa.py`
 
 ```python
-from transturing.isa import program
+from transturing import program
 
 # 计算 7 + 3
 prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
@@ -331,7 +437,7 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 | `("OPCODE", arg)` | `("PUSH", 42)` | 带参数的操作码 |
 | `("OPCODE",)` | `("ADD",)` | 无参数的操作码 |
 
-所有操作码名称（不区分大小写）：PUSH, POP, ADD, DUP, HALT, SUB, JZ, JNZ, NOP, SWAP, OVER, ROT, MUL, DIV_S, DIV_U, REM_S, REM_U, EQZ, EQ, NE, LT_S, LT_U, GT_S, GT_U, LE_S, LE_U, GE_S, GE_U, AND, OR, XOR, SHL, SHR_S, SHR_U, ROTL, ROTR, CLZ, CTZ, POPCNT, ABS, NEG, SELECT, LOCAL_GET, LOCAL_SET, LOCAL_TEE, I32_LOAD, I32_STORE, I32_LOAD8_U, I32_LOAD8_S, I32_LOAD16_U, I32_LOAD16_S, I32_STORE8, I32_STORE16, CALL, RETURN。
+所有操作码名称（不区分大小写）：PUSH, POP, ADD, DUP, HALT, SUB, JZ, JNZ, NOP, SWAP, OVER, ROT, MUL, DIV_S, DIV_U, REM_S, REM_U, EQZ, EQ, NE, LT_S, LT_U, GT_S, GT_U, LE_S, LE_U, GE_S, GE_U, AND, OR, XOR, SHL, SHR_S, SHR_U, ROTL, ROTR, CLZ, CTZ, POPCNT, ABS, NEG, SELECT, LOCAL.GET, LOCAL.SET, LOCAL.TEE, I32.LOAD, I32.STORE, I32.LOAD8_U, I32.LOAD8_S, I32.LOAD16_U, I32.LOAD16_S, I32.STORE8, I32.STORE16, CALL, RETURN。
 
 ---
 
@@ -339,7 +445,7 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 逐令牌比较两条执行轨迹。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/core/isa.py`
 
 **返回：** `(match: bool, detail: str)`
 
@@ -349,30 +455,29 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 ---
 
-### test_algorithm(name, prog, expected, np_exec, pt_exec, verbose=False)
+### test_algorithm(cfg)
 
-在两个执行器上运行同一程序，验证结果和轨迹一致性。
+在两个执行器上运行同一程序，验证结果和轨迹一致性。参数通过 `TestConfig` 打包传入。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/core/isa.py`
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `name` | `str` | 测试名称，用于输出显示 |
-| `prog` | `List[Instruction]` | 待测程序 |
-| `expected` | `int` | 期望的最终栈顶值 |
-| `np_exec` | `NumPyExecutor` | NumPy 执行器实例 |
-| `pt_exec` | `TorchExecutor` | PyTorch 执行器实例 |
-| `verbose` | `bool` | 失败时打印详细诊断信息 |
+```python
+def test_algorithm(cfg: TestConfig) -> tuple[bool, int]:
+```
 
 **返回：** `(all_ok: bool, steps: int)`
 
 验证三个条件：NumPy 结果正确、PyTorch 结果正确、两条轨迹完全一致。
 
-### test_trap_algorithm(name, prog, np_exec, pt_exec, verbose=False)
+### test_trap_algorithm(cfg)
 
-测试预期会触发 TRAP 的程序（如除零、栈下溢）。
+测试预期会触发 TRAP 的程序（如除零、栈下溢）。参数通过 `TestConfig` 打包传入。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/core/isa.py`
+
+```python
+def test_trap_algorithm(cfg: TestConfig) -> bool:
+```
 
 **返回：** `bool`，两个执行器都正确触发 TRAP 且轨迹一致时为 `True`。
 
@@ -380,9 +485,16 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 ## 嵌入函数
 
-这组函数将执行状态编码为 `D_MODEL` 维的 `float64` 向量。每个函数设置不同的"类型标记"维度，使注意力头能区分不同内存空间。
+这组函数将执行状态编码为 `D_MODEL`（51）维的 `float64` 向量。每个函数设置不同的"类型标记"维度，使注意力头能区分不同内存空间。
 
-**所在文件：** `src/transturing/isa.py`
+**所在文件：** `src/transturing/backends/torch_backend.py`
+
+```python
+from transturing.backends.torch_backend import (
+    embed_program_token, embed_stack_entry, embed_state,
+    embed_local_entry, embed_heap_entry, embed_call_frame,
+)
+```
 
 | 函数 | 签名 | 用途 |
 |------|------|------|
@@ -397,9 +509,36 @@ prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))
 
 ---
 
+## 数学辅助函数
+
+**所在文件：** `src/transturing/core/isa.py`
+
+```python
+from transturing.core.isa import trunc_div, to_i32, clz32, ctz32, popcnt32
+```
+
+| 函数 | 说明 |
+|------|------|
+| `trunc_div(a, b)` | 截断除法（向零取整） |
+| `trunc_rem(a, b)` | 截断余数 |
+| `to_i32(val)` | 将值转换为有符号 i32（32 位整数溢出掩码） |
+| `shr_u(a, b)` | 无符号右移 |
+| `shr_s(a, b)` | 有符号右移（保留符号位） |
+| `rotl32(a, b)` | 32 位循环左移 |
+| `rotr32(a, b)` | 32 位循环右移 |
+| `clz32(val)` | 统计前导零 |
+| `ctz32(val)` | 统计后缀零 |
+| `popcnt32(val)` | 统计置位位数（汉明重量） |
+| `sign_extend_8(val)` | 8 位符号扩展到 32 位 |
+| `sign_extend_16(val)` | 16 位符号扩展到 32 位 |
+
+---
+
 ## 数据类型
 
 ### Instruction
+
+**所在文件：** `src/transturing/core/isa.py`
 
 ```python
 @dataclass
@@ -410,6 +549,8 @@ class Instruction:
 
 ### Trace
 
+**所在文件：** `src/transturing/core/isa.py`
+
 ```python
 @dataclass
 class Trace:
@@ -418,6 +559,8 @@ class Trace:
 ```
 
 ### TraceStep
+
+**所在文件：** `src/transturing/core/isa.py`
 
 ```python
 @dataclass
@@ -428,23 +571,55 @@ class TraceStep:
     top: int      # 执行后的栈顶值
 ```
 
+### TestConfig
+
+**所在文件：** `src/transturing/core/isa.py`
+
+```python
+@dataclass
+class TestConfig:
+    name: str
+    prog: list[Instruction]
+    expected: int | None   # None 表示不验证结果值
+    np_exec: ExecutorBackend
+    pt_exec: ExecutorBackend
+    verbose: bool = False
+```
+
+`test_algorithm` 和 `test_trap_algorithm` 的参数打包类。使用 `ExecutorBackend` 抽象类型，因此可以接受任何注册的后端实例（NumPyExecutor 或 TorchExecutor）。
+
 ---
 
 ## 常量
 
+### 核心常量（isa.py）
+
 | 常量 | 值 | 说明 |
 |------|-----|------|
 | `D_MODEL` | 51 | 模型维度 |
-| `DTYPE` | `torch.float64` | 数值精度（强制 float64） |
-| `EPS` | `1e-6` | PyTorch 精度常量（近次编码用） |
 | `N_OPCODES` | 55 | ISA 操作码数量（不含 TRAP） |
 | `OP_TRAP` | 99 | 运行时错误操作码 |
+| `MASK32` | `0xFFFFFFFF` | i32 溢出掩码 |
+| `TOKENS_PER_STEP` | 4 | 每步轨迹的令牌数量 |
+
+51 个维度布局：3 个类型标记 + 2×5 抛物线键对（prog/stack/local/heap/call）+ 24 个操作码标志 + 4 个状态维度（IP/SP/OPCODE/VALUE）+ DIM_ONE + local/heap/call 标志 + 调用值维度（ret_addr/saved_sp/locals_base）。
+
+### PyTorch 后端常量（torch_backend.py）
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `DTYPE` | `torch.float64` | 数值精度（强制 float64） |
+| `EPS` | `1e-6` | PyTorch 精度常量（近次编码用） |
+
+### NumPy 后端常量
+
+NumPy 执行器使用 `eps=1e-10`，定义在 `numpy_backend.py` 的 `_ParabolicStore` 类中。与 PyTorch 的 `EPS=1e-6` 不同，这是设计上的差异（不同的精度上下文）。
 
 ---
 
 ## 相关文档
 
 - [文件地图](file-map.md)，仓库结构和每个文件的职责
-- [项目主页](../README.md)，文档导航和阅读指南
+- [项目主页](../../README.md)，文档导航和阅读指南
 - [ISA 参考](../isa/index.md)，55 个操作码的完整定义
 - [架构概览](../architecture/overview.md)，系统设计和技术背景

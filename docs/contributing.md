@@ -8,7 +8,7 @@
 
 ### 基本要求
 
-- **Python 3.12+**（`pyproject.toml` 中指定 `>=3.12`）
+- **Python 3.14**（`pyproject.toml` 中指定 `>=3.14`）
 - NumPy >= 1.24
 - PyTorch >= 2.0
 
@@ -41,16 +41,23 @@ uv run pytest tests/ -v
 
 ```
 src/transturing/
-├── __init__.py
-├── isa.py          ← 55 个操作码、TokenVocab、嵌入函数、CompiledAttentionHead
-├── executor.py     ← NumPyExecutor（参考/演示后端）、CompiledModel（PyTorch nn.Module）、TorchExecutor（PyTorch 主后端）
-├── programs.py     ← 测试程序生成器（fib、mul、gcd 等 30+ 个 make_* 函数）
-├── assembler.py    ← WASM 风格结构化控制流编译器（block/loop/if/br → 扁平 ISA）
-├── wat_parser.py   ← WebAssembly 文本格式解析器
-└── c_pipeline.py   ← C → WAT → ISA 编译管线
+├── __init__.py           # Re-exports core API + registry
+├── core/
+│   ├── __init__.py       # Re-exports core symbols
+│   ├── isa.py            # 55 个操作码、DIM 常量、数学工具、Trace 类型
+│   ├── abc.py            # ExecutorBackend 抽象基类
+│   ├── registry.py       # 后端发现（get_executor, list_backends）
+│   ├── programs.py       # 测试程序生成器（fib、mul、gcd 等 30+ 个 make_* 函数）
+│   ├── assembler.py      # WASM 风格结构化控制流编译器（block/loop/if/br → 扁平 ISA）
+│   ├── wat_parser.py     # WebAssembly 文本格式解析器
+│   └── c_pipeline.py     # C → WAT → ISA 编译管线
+└── backends/
+    ├── __init__.py       # 仅文档字符串（动态导入保护）
+    ├── numpy_backend.py  # NumPyExecutor（参考/演示后端）
+    └── torch_backend.py  # CompiledAttentionHead、TokenVocab、CompiledModel、TorchExecutor（PyTorch 主后端）
 ```
 
-导入链：`isa.py` ← `executor.py` ← `programs.py` ← `assembler.py` ← `wat_parser.py` ← `c_pipeline.py`。包内使用相对导入（`from .isa import ...`），外部使用 `from transturing.X import ...`。
+导入图：`core/isa.py` 是共享根模块。`programs.py` 和 `assembler.py` 均从 `isa.py` 导入。`wat_parser.py` 从 `isa.py` 和 `assembler.py` 导入。`c_pipeline.py` 从 `isa.py` 和 `wat_parser.py` 导入。后端通过 `from transturing.core.isa import ...` 导入。外部使用 `from transturing.core.isa import ...` 或 `from transturing.backends.numpy_backend import ...`。
 
 修改某个模块时注意下游依赖。
 
@@ -90,7 +97,7 @@ result = (a + b) & 0xFFFFFFFF
 
 ### EPS 精度差异
 
-NumPy 执行器使用 `eps=1e-10`，PyTorch 使用 `EPS=1e-6`（来自 `isa.py`）。这是有意为之的设计，对应不同精度上下文。不要统一这两个值。
+NumPy 执行器使用 `eps=1e-10`，PyTorch 使用 `EPS=1e-6`（来自 `torch_backend.py`）。这是有意为之的设计，对应不同精度上下文。不要统一这两个值。
 
 ### 地址写入的时效偏置
 
@@ -131,12 +138,12 @@ uv run pytest tests/ -v
 
 需要同时更新两个文件：
 
-1. `src/transturing/isa.py`：操作码定义 + TokenVocab
-2. `src/transturing/executor.py`：NumPyExecutor 的分派逻辑 + CompiledModel 的编译逻辑
+1. `src/transturing/core/isa.py`：操作码定义 + DIM 常量
+2. `src/transturing/backends/numpy_backend.py` + `src/transturing/backends/torch_backend.py`：两个后端的分派逻辑和编译逻辑
 
 ### 添加测试程序
 
-在 `src/transturing/programs.py` 中遵循 `make_*` 命名模式，然后加入测试。
+在 `src/transturing/core/programs.py` 中遵循 `make_*` 命名模式，然后加入测试。
 
 ## 提交规范
 
@@ -163,19 +170,19 @@ uv run pytest tests/ -v
 | 使用 float32 | 抛物线地址编码在 float32 下只支持约 4K 索引 |
 | 抑制类型错误 | 不允许 `# type: ignore`、`@ts-ignore` |
 | 批量攒改动后提交 | 每次写入后提交，会话可能随时中断 |
-| 盲读大文件 | 先看 `docs/reference/api.md` 获取函数索引，再定向读取。`executor.py` ~1360 行，不要从头读到尾 |
+| 盲读大文件 | 先看 `docs/reference/api.md` 获取函数索引，再定向读取。`torch_backend.py` ~1212 行，不要从头读到尾 |
 | 锁定精确依赖版本 | 研究仓库，用 `>=` 指定下界 |
 
 ## 常见任务速查
 
 | 任务 | 入口文件 | 备注 |
 |------|----------|------|
-| 添加操作码 | `src/transturing/isa.py` + `executor.py` | 两个执行器都要更新 |
-| 编写测试程序 | `src/transturing/programs.py` | 遵循 `make_*` 命名模式 |
-| 理解嵌入编码 | `src/transturing/isa.py` 第 733 行起 | `embed_*` 函数 |
-| 调试执行轨迹 | `src/transturing/isa.py` → `compare_traces()` | 逐步对比 |
-| 添加结构化控制流 | `src/transturing/assembler.py` | WASM 风格 block/loop/if/br |
-| 解析 WAT 文本 | `src/transturing/wat_parser.py` | 完整 WAT 语法支持 |
+| 添加操作码 | `src/transturing/core/isa.py` + 两个 backends | 两个执行器都要更新 |
+| 编写测试程序 | `src/transturing/core/programs.py` | 遵循 `make_*` 命名模式 |
+| 理解嵌入编码 | `src/transturing/backends/torch_backend.py` | `embed_*` 函数 |
+| 调试执行轨迹 | `src/transturing/core/isa.py` → `compare_traces()` | 逐步对比 |
+| 添加结构化控制流 | `src/transturing/core/assembler.py` | WASM 风格 block/loop/if/br |
+| 解析 WAT 文本 | `src/transturing/core/wat_parser.py` | 完整 WAT 语法支持 |
 
 ## 相关文档
 

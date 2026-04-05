@@ -9,7 +9,7 @@
 执行器是一个栈机 (stack machine), 指令序列由 `Instruction` 对象组成。每个 `Instruction` 有操作码和参数两个字段:
 
 ```python
-from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
 
 instr = Instruction(OP_PUSH, 42)   # 操作码=1, 参数=42
 ```
@@ -32,8 +32,8 @@ instr = Instruction(OP_PUSH, 42)   # 操作码=1, 参数=42
 ### 示例 1: 基本算术 (3 + 5)
 
 ```python
-from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from transturing.backends.numpy_backend import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 3),    # 栈: [3]
@@ -51,8 +51,8 @@ print(trace.steps[-1].top)      # 输出: 8
 ### 示例 2: 循环倒数 (用 JNZ 反复减 1)
 
 ```python
-from transturing.isa import Instruction, OP_PUSH, OP_DUP, OP_SUB, OP_JNZ, OP_HALT
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction, OP_PUSH, OP_DUP, OP_SUB, OP_JNZ, OP_HALT
+from transturing.backends.numpy_backend import NumPyExecutor
 
 # 从 3 倒数到 0: 3 -> 2 -> 1 -> 0
 prog = [
@@ -75,7 +75,7 @@ print(trace.steps[-1].top)      # 输出: 0
 也可以用 `isa.program()` 辅助函数代替手动创建 `Instruction` 对象:
 
 ```python
-from transturing.isa import program
+from transturing.core.isa import program
 
 prog = program(
     ("PUSH", 3),
@@ -94,8 +94,8 @@ prog = program(
 直接用地址跳转容易出错。`assembler.py` 提供了 WASM 风格的结构化控制流, 编译器自动计算跳转目标:
 
 ```python
-from transturing.assembler import compile_structured
-from transturing.executor import NumPyExecutor
+from transturing.core.assembler import compile_structured
+from transturing.backends.numpy_backend import NumPyExecutor
 ```
 
 支持的结构化指令:
@@ -114,8 +114,8 @@ from transturing.executor import NumPyExecutor
 ### 示例 3: 用汇编器写倒数循环
 
 ```python
-from transturing.assembler import compile_structured
-from transturing.executor import NumPyExecutor
+from transturing.core.assembler import compile_structured
+from transturing.backends.numpy_backend import NumPyExecutor
 
 prog = compile_structured([
     ('PUSH', 5),          # 初始值
@@ -139,9 +139,9 @@ print(trace.steps[-1].top)  # 输出: 0
 CALL/RETURN 支持递归函数调用。下面是使用 LOCAL 变量和 CALL 的阶乘:
 
 ```python
-from transturing.isa import Instruction, OP_PUSH, OP_DUP, OP_JZ, OP_SUB, OP_MUL
-from transturing.isa import OP_LOCAL_SET, OP_LOCAL_GET, OP_CALL, OP_RETURN, OP_HALT
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction, OP_PUSH, OP_DUP, OP_JZ, OP_SUB, OP_MUL
+from transturing.core.isa import OP_LOCAL_SET, OP_LOCAL_GET, OP_CALL, OP_RETURN, OP_HALT
+from transturing.backends.numpy_backend import NumPyExecutor
 
 # 阶乘: fact(5) = 120
 # 使用迭代循环 + LOCAL 变量
@@ -163,7 +163,7 @@ prog = [
 ]
 
 # 推荐直接使用 make_factorial 生成器:
-from transturing.programs import make_factorial
+from transturing.core.programs import make_factorial
 prog, expected = make_factorial(5)  # expected = 120
 
 trace = NumPyExecutor().execute(prog)
@@ -173,10 +173,10 @@ print(trace.steps[-1].top)          # 输出: 120
 对于递归阶乘, 可以用 CALL/RETURN 实现:
 
 ```python
-from transturing.isa import Instruction
-from transturing.isa import OP_PUSH, OP_CALL, OP_RETURN, OP_HALT, OP_LOCAL_GET
-from transturing.isa import OP_LOCAL_SET, OP_SUB, OP_MUL, OP_DUP, OP_NOP
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction
+from transturing.core.isa import OP_PUSH, OP_CALL, OP_RETURN, OP_HALT, OP_LOCAL_GET
+from transturing.core.isa import OP_LOCAL_SET, OP_SUB, OP_MUL, OP_DUP, OP_NOP
+from transturing.backends.numpy_backend import NumPyExecutor
 
 # 递归 fact(n): n <= 1 返回 1, 否则 n * fact(n-1)
 prog = [
@@ -207,11 +207,11 @@ trace = NumPyExecutor().execute(prog)
 I32.LOAD 和 I32.STORE 操作堆内存。下面的程序对数组 `[3, 1, 2]` 排序, 结果 `[1, 2, 3]`:
 
 ```python
-from transturing.isa import Instruction
-from transturing.isa import (OP_PUSH, OP_HALT, OP_ADD, OP_SUB, OP_DUP, OP_JZ, OP_JNZ,
+from transturing.core.isa import Instruction
+from transturing.core.isa import (OP_PUSH, OP_HALT, OP_ADD, OP_SUB, OP_DUP, OP_JZ, OP_JNZ,
                  OP_LOCAL_SET, OP_LOCAL_GET,
                  OP_I32_LOAD, OP_I32_STORE, OP_GT_S)
-from transturing.executor import NumPyExecutor
+from transturing.backends.numpy_backend import NumPyExecutor
 
 # 对 [3, 1, 2] 冒泡排序, 读 mem[0] 应得到 1
 prog = [
@@ -249,8 +249,8 @@ prog = [
 `wat_parser.py` 可以解析 WebAssembly 文本格式 (WAT), 自动编译为指令列表:
 
 ```python
-from transturing.wat_parser import parse_wat
-from transturing.executor import NumPyExecutor
+from transturing.core.wat_parser import parse_wat
+from transturing.backends.numpy_backend import NumPyExecutor
 ```
 
 `parse_wat(text, append_halt=True)` 返回 `List[Instruction]`, 可直接交给执行器运行。
@@ -328,8 +328,8 @@ WAT 解析器内部调用 `compile_structured()`, 两者的控制流语义一致
 `programs.py` 提供了一系列 `make_*` 函数, 自动生成常见算法的指令序列:
 
 ```python
-from transturing.programs import make_fibonacci, make_factorial, make_gcd, make_multiply
-from transturing.executor import NumPyExecutor
+from transturing.core.programs import make_fibonacci, make_factorial, make_gcd, make_multiply
+from transturing.backends.numpy_backend import NumPyExecutor
 
 # Fibonacci: fib(10) = 55
 prog, expected = make_fibonacci(10)
@@ -357,8 +357,9 @@ prog, expected = make_multiply(7, 8)
 `isa.py` 提供了 `compare_traces()` 函数, 对比两次执行的每一步是否完全一致。这是项目中最核心的验证方式: NumPy 执行器和 PyTorch 执行器必须产生完全相同的 trace。
 
 ```python
-from transturing.isa import compare_traces
-from transturing.executor import NumPyExecutor, TorchExecutor
+from transturing.core.isa import compare_traces
+from transturing.backends.numpy_backend import NumPyExecutor
+from transturing.backends.torch_backend import TorchExecutor
 
 prog, expected = make_fibonacci(10)
 
@@ -390,9 +391,10 @@ print(trace.format_trace())
 项目中的测试遵循固定模式:
 
 ```python
-from transturing.isa import Instruction, compare_traces
-from transturing.executor import NumPyExecutor, TorchExecutor
-from transturing.programs import make_factorial
+from transturing.core.isa import Instruction, compare_traces
+from transturing.backends.numpy_backend import NumPyExecutor
+from transturing.backends.torch_backend import TorchExecutor
+from transturing.core.programs import make_factorial
 
 def test_my_program():
     prog = [
@@ -426,8 +428,8 @@ def test_my_program():
 
 ```python
 # 溢出示例
-from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT, MASK32
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT, MASK32
+from transturing.backends.numpy_backend import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 0xFFFFFFFF),

@@ -2,15 +2,15 @@
 
 > 编译型 transformer 执行器, 程序在 transformer 自身的推理循环中运行。每条指令获取和内存读取都是一个抛物线注意力头。transformer **就是** 计算机。55 操作码 WASM 风格 ISA, Python 后端 (PyTorch/NumPy)。
 
-本项目独立验证了 [Percepta 的声明](https://percepta.ai/blog/can-llms-be-computers): 通过 2D 凸包注意力实现 O(log t) 的每步解码, transformer 能够执行任意程序。经过 20 个研究阶段的探索, 核心结论是"编译而非训练", 将执行逻辑直接编译到 transformer 权重中可获得 100% 的正确执行率。
+本项目独立验证了 [Percepta 的声明](https://percepta.ai/blog/can-llms-be-computers): 通过 2D 凸包注意力实现 O(log t) 的每步解码, transformer 能够执行任意程序。经过 20 个研究阶段的探索, 核心结论是"编译而非训练": **执行器的寻址/路由逻辑**需要通过解析方式写入模型结构, 而**具体程序**则编译为该执行器可运行的 ISA 指令序列（在 Torch 后端中进一步表现为程序内存 embedding）。
 
 ## 关键数据
 
 | 指标 | 值 |
 |------|-----|
 | ISA 操作码数 | 55 (WASM 风格栈机) |
-| 模型维度 | d_model=36, head_dim=2 |
-| 编译参数量 | ~964 |
+| 模型维度 | d_model=51, head_dim=2 |
+| 编译参数量 | ~2656 |
 | 注意力机制 | Hard-max (argmax), 禁止 softmax |
 | 数值精度 | Float64 (强制) |
 | 后端 | Python (PyTorch/NumPy) |
@@ -31,7 +31,7 @@
 |------|------|
 | [架构概览](architecture/overview.md) | 整体设计: 抛物线编码、注意力头、内存空间 |
 | [内存模型](architecture/memory-model.md) | 五大内存空间的寻址机制 |
-| [编译流程](architecture/compilation.md) | 从程序到 transformer 权重的编译过程 |
+| [编译流程](architecture/compilation.md) | 执行器权重的编译过程, 以及程序如何降到 ISA |
 
 ### ISA 参考
 
@@ -83,7 +83,7 @@
 如果你想在项目中写代码:
 
 1. **[架构概览](architecture/overview.md)**, 理解核心机制
-2. **[编译流程](architecture/compilation.md)**, 了解权重是如何编译出来的
+2. **[编译流程](architecture/compilation.md)**, 了解执行器权重如何编译出来, 以及程序如何进入执行器
 3. **[程序编写](guides/writing-programs.md)**, 学习编写和测试新程序
 4. **[API 参考](reference/api.md)**, 查阅具体接口
 5. **[文件地图](reference/file-map.md)**, 快速定位代码位置

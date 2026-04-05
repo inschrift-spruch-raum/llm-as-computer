@@ -4,7 +4,7 @@
 
 ## 前置条件
 
-- Python 3.12+
+- Python 3.14
 - Git
 
 ## 安装
@@ -22,8 +22,8 @@ uv sync
 这段程序把 3 和 5 压入栈, 相加, 然后停机。每一行都是一条指令, 每一条指令的获取都是一次注意力操作。
 
 ```python
-from transturing.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from transturing.executor import NumPyExecutor
+from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+from transturing.backends.numpy_backend import NumPyExecutor
 
 prog = [
     Instruction(OP_PUSH, 3),
@@ -64,7 +64,7 @@ Step 3: OP_HALT       stack=[8]
 3. `OP_ADD` 弹出栈顶两个值, 相加, 结果压回栈
 4. `OP_HALT` 停机
 
-栈机执行, 55 个操作码, 编译进 transformer 权重。没有解释器, 没有 JIT, 全是矩阵运算。
+栈机执行, 55 个操作码的执行机制通过解析方式固定到 transformer 执行器中。没有外部解释器, 没有 JIT, 核心读取路径是矩阵运算。
 
 ## 下一步
 
