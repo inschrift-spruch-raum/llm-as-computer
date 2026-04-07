@@ -1,8 +1,8 @@
 # transturing 文档
 
-> 编译型 transformer 执行器, 程序在 transformer 自身的推理循环中运行。每条指令获取和内存读取都是一个抛物线注意力头。transformer **就是** 计算机。55 操作码 WASM 风格 ISA, Python 后端 (PyTorch/NumPy)。
+> 面向受支持 WASM32 字节输入的 transformer 运行时。用户提供 `.wasm` 二进制模块，运行时在 transformer 自身的推理循环中执行它。每条取指和内存读取都是一个抛物线注意力头。transformer **就是** 计算机。
 
-本项目独立验证了 [Percepta 的声明](https://percepta.ai/blog/can-llms-be-computers): 通过 2D 凸包注意力实现 O(log t) 的每步解码, transformer 能够执行任意程序。经过 20 个研究阶段的探索, 核心结论是"编译而非训练": **执行器的寻址/路由逻辑**需要通过解析方式写入模型结构, 而**具体程序**则编译为该执行器可运行的 ISA 指令序列（在 Torch 后端中进一步表现为程序内存 embedding）。当前主入口是 `.wasm` 二进制模块经由最小 binary frontend 进入既有 lowering 语义, 再落到内部 ISA。当前记录的支持范围只涵盖已验证的 i32 子集。
+本项目独立验证了 [Percepta 的声明](https://percepta.ai/blog/can-llms-be-computers): 通过 2D 凸包注意力实现 O(log t) 的每步解码, transformer 能够执行任意程序。经过 20 个研究阶段的探索，核心结论是“编译而非训练”：**执行器的寻址/路由逻辑**需要通过解析方式写入模型结构。当前公开产品边界是**执行受支持的 WASM32 二进制输入，返回运行时轨迹与结果**。内部 55 操作码表示仍存在，但属于实现细节；源码编译、C toolchain 和面向用户的私有 ISA 编写 helper 都不在支持范围内。
 
 ## 关键数据
 
@@ -23,7 +23,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| [快速开始](quickstart.md) | 环境搭建与第一个程序 |
+| [快速开始](quickstart.md) | 新的运行时契约、安装与执行 `.wasm` 模块 |
 
 ### 架构文档
 
@@ -33,11 +33,12 @@
 | [内存模型](architecture/memory-model.md) | 五大内存空间的寻址机制 |
 | [编译流程](architecture/compilation.md) | 执行器权重的编译过程, 以及程序如何降到 ISA |
 
-### ISA 参考
+### 内部实现 / 研究参考
 
 | 文档 | 说明 |
 |------|------|
-| [完整 ISA 参考](isa/index.md) | 55 个操作码的分类索引 |
+| [程序编写](guides/writing-programs.md) | 以 `.wasm` bytes 执行为主线，附带内部实现背景 |
+| [完整 ISA 参考](isa/index.md) | 55 个操作码的内部执行表示索引 |
 | [操作码详解](isa/opcodes.md) | 每个操作码的语义、参数和执行行为 |
 
 ### 使用指南
@@ -45,7 +46,6 @@
 | 文档 | 说明 |
 |------|------|
 | [工作原理](guides/how-it-works.md) | 逐步跟踪一个 4 指令程序的执行 |
-| [程序编写](guides/writing-programs.md) | 如何用指令、汇编器和二进制 `.wasm` 导入路径编写程序 |
 
 ### 开发文档
 
@@ -58,7 +58,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| [API 参考](reference/api.md) | NumPyExecutor、TorchExecutor 等核心接口 |
+| [API 参考](reference/api.md) | 包根公开 API 与保留的 WASM bytes ingestion helper 说明 |
 | [文件地图](reference/file-map.md) | 仓库文件结构与职责 |
 
 ### 其他
@@ -74,7 +74,7 @@
 
 如果你第一次接触这个项目, 建议按以下顺序阅读:
 
-1. **[快速开始](quickstart.md)**, 搭建环境并运行第一个程序
+1. **[快速开始](quickstart.md)**, 先理解新的运行时契约、安装步骤与 `.wasm` 执行方式
 2. **[工作原理](guides/how-it-works.md)**, 理解 transformer 如何"变成"计算机
 3. **[架构概览](architecture/overview.md)**, 了解整体设计思路
 
@@ -83,8 +83,8 @@
 如果你想在项目中写代码:
 
 1. **[架构概览](architecture/overview.md)**, 理解核心机制
-2. **[编译流程](architecture/compilation.md)**, 了解执行器权重如何编译出来, 以及程序如何进入执行器
-3. **[程序编写](guides/writing-programs.md)**, 学习编写和测试新程序
+2. **[编译流程](architecture/compilation.md)**, 了解执行器权重如何编译出来
+3. **[程序编写](guides/writing-programs.md)**, 查看 `.wasm` bytes 执行入口与内部实现补充
 4. **[API 参考](reference/api.md)**, 查阅具体接口
 5. **[文件地图](reference/file-map.md)**, 快速定位代码位置
 
@@ -94,7 +94,7 @@
 
 1. **[关键发现摘要](development/findings-summary.md)**, 了解"编译优于训练"的实验证据
 2. **[内存模型](architecture/memory-model.md)**, 抛物线编码和五大内存空间的技术细节
-3. **[完整 ISA 参考](isa/index.md)**, 55 个操作码的完整定义
+3. **[完整 ISA 参考](isa/index.md)**, 55 个操作码的内部定义
 4. **[R&D 计划摘要](development/rd-plan-summary.md)**, 20 个研究阶段的演进路线
 
 ## 相关博文

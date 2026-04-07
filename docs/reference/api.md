@@ -1,47 +1,35 @@
 # API 参考
 
-核心 Python 类和函数的接口文档。项目分为两层子包：`src/transturing/core/`（零依赖核心：ISA 定义、类型、后端抽象、测试工具）和 `src/transturing/backends/`（隔离的后端实现：NumPy 和 PyTorch）。
+核心 Python 类和函数的接口文档。对外稳定的包根公开面非常小：`Trace`、`TraceStep`、`get_executor()`、`list_backends()`。其余模块大多属于运行时内部实现、研究材料或保留兼容入口。
 
-> **模块依赖图：** `core/isa.py` 是共享根模块。`programs.py` 和 `assembler.py` 均从 `isa.py` 导入。`wasm_binary.py` 复用既有 lowering 语义。`c_pipeline.py` 通过 `compile_wasm()` 走主路径。后端通过 `from transturing.core.isa import ...` 引用核心模块。
+> **边界提醒：** 如果你的目标是“提供受支持的 WASM32 bytes 并执行它们”，优先围绕 `get_executor()` 与 `transturing.core.wasm_binary` 中保留的 bytes ingestion helper 来理解仓库。不要把内部 ISA helper、测试工具或后端实现细节误解为顶层稳定公共 API。
 
 ## 导入示例
 
 ```python
-# 顶层便捷导入（推荐）:
-from transturing import (
-    D_MODEL, MASK32, N_OPCODES, TOKENS_PER_STEP,
-    Instruction, Trace, TraceStep,
-    compare_traces, compile_wasm, compile_wasm_function, compile_wasm_module,
-    get_executor, list_backends, parse_wasm_binary, parse_wasm_file,
-    program, test_algorithm, test_trap_algorithm,
-)
+# 包根公开 API（稳定面）:
+from pathlib import Path
 
-# 后端注册表（推荐用于用户代码）:
-exec_np = get_executor('numpy')   # 返回 NumPyExecutor
-exec_pt = get_executor('torch')   # 返回 TorchExecutor
+from transturing import Trace, TraceStep, get_executor, list_backends
 
-# 直接后端导入:
-from transturing.backends.numpy_backend import NumPyExecutor
-from transturing.backends.torch_backend import (
-    TorchExecutor, CompiledModel, CompiledAttentionHead,
-    TokenVocab, DTYPE, EPS,
-    embed_program_token, embed_stack_entry, embed_state,
-    embed_local_entry, embed_heap_entry, embed_call_frame,
-)
+# 当前仓库保留的 WASM bytes ingestion helper:
+from transturing.core.wasm_binary import compile_wasm_module, parse_wasm_file
 
-# 核心模块导入:
-from transturing.core.isa import OP_PUSH, OP_ADD, OP_HALT, MASK32
-from transturing.core.assembler import compile_structured
-from transturing.core.wasm_binary import (
-    compile_wasm, compile_wasm_function, compile_wasm_module,
-    parse_wasm_binary, parse_wasm_file,
-)
-from transturing.core.programs import make_fibonacci, make_factorial
-from transturing.core.abc import ExecutorBackend
-from transturing.core.registry import get_executor, list_backends, register_backend
+executor = get_executor()
+module = parse_wasm_file("program.wasm")
+program = compile_wasm_module(Path("program.wasm").read_bytes())
+trace = executor.execute(program)
 ```
 
-对当前程序导入 API 来说, 主路径是二进制 `.wasm` 模块经由 `compile_wasm()` / `compile_wasm_module()` / `compile_wasm_function()` 以及 `parse_wasm_binary()` / `parse_wasm_file()` 进入既有 lowering 语义。当前记录的支持范围只覆盖已验证的 i32 子集。
+```python
+# 后端专用 / 内部实现入口（仅在需要时再直接导入）:
+from transturing.backends.numpy_backend import NumPyExecutor
+from transturing.backends.torch_backend import TorchExecutor, CompiledModel
+from transturing.core.abc import ExecutorBackend
+from transturing.core.registry import register_backend
+```
+
+当前记录的支持范围只覆盖已验证的 i32 子集。
 
 ---
 
@@ -198,10 +186,10 @@ trace = exec_pt.execute(prog, max_steps=50000)
 
 ### 双执行器验证
 
-项目中所有测试都要求 NumPy 和 PyTorch 两个执行器产生**完全相同**的轨迹。用 `compare_traces()` 进行逐令牌比对。
+项目中所有测试都要求 NumPy 和 PyTorch 两个执行器产生**完全相同**的轨迹。用 `compare_traces()` 进行逐令牌比对。注意：`program()` 与 `compare_traces()` 属于 `transturing.core.isa` 的内部/研究型 helper，不是包根稳定公开面。
 
 ```python
-from transturing import program, compare_traces
+from transturing.core.isa import compare_traces, program
 from transturing.backends.numpy_backend import NumPyExecutor
 from transturing.backends.torch_backend import TorchExecutor
 
@@ -429,7 +417,7 @@ output = V[argmax(scores)]       → (v_dim,)
 **所在文件：** `src/transturing/core/isa.py`
 
 ```python
-from transturing import program
+from transturing.core.isa import program
 
 # 计算 7 + 3
 prog = program(("PUSH", 7), ("PUSH", 3), ("ADD",), ("HALT",))

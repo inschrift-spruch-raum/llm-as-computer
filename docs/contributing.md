@@ -24,7 +24,7 @@ uv sync
 
 ### 可选依赖
 
-- **C 编译管道**（`c_pipeline.py`）主路径需要 `clang`（带 wasm32 目标支持）。这已经足够支持 `compile_c()` / `compile_and_run()` 的二进制 `.wasm` 主路径。
+- 无额外可选依赖。当前公开路径接受二进制 `.wasm` 输入，不需要外部 C 编译器。
 
 ### 验证安装
 
@@ -48,15 +48,14 @@ src/transturing/
 │   ├── abc.py            # ExecutorBackend 抽象基类
 │   ├── registry.py       # 后端发现（get_executor, list_backends）
 │   ├── programs.py       # 测试程序生成器（fib、mul、gcd 等 30+ 个 make_* 函数）
-│   ├── assembler.py      # WASM 风格结构化控制流编译器（block/loop/if/br → 扁平 ISA）
-│   └── c_pipeline.py     # C → .wasm → ISA 主编译管线
+│   └── wasm_binary.py    # 最小 WASM 二进制前端（解码 + 结构化 lowering + 编译入口）
 └── backends/
     ├── __init__.py       # 仅文档字符串（动态导入保护）
     ├── numpy_backend.py  # NumPyExecutor（参考/演示后端）
     └── torch_backend.py  # CompiledAttentionHead、TokenVocab、CompiledModel、TorchExecutor（PyTorch 主后端）
 ```
 
-导入图：`core/isa.py` 是共享根模块。`programs.py` 和 `assembler.py` 均从 `isa.py` 导入。`wasm_binary.py` 复用既有 lowering 语义。`c_pipeline.py` 通过 `compile_wasm()` 走主路径。后端通过 `from transturing.core.isa import ...` 导入。外部使用 `from transturing.core.isa import ...` 或 `from transturing.backends.numpy_backend import ...`。
+导入图：`core/isa.py` 是共享根模块。`programs.py` 和 `wasm_binary.py` 均从 `isa.py` 导入。`wasm_binary.py` 包含结构化控制流 lowering 和二进制前端。后端通过 `from transturing.core.isa import ...` 导入。外部使用 `from transturing.core.isa import ...` 或 `from transturing.backends.numpy_backend import ...`。
 
 修改某个模块时注意下游依赖。
 
@@ -180,7 +179,7 @@ uv run pytest tests/ -v
 | 编写测试程序 | `src/transturing/core/programs.py` | 遵循 `make_*` 命名模式 |
 | 理解嵌入编码 | `src/transturing/backends/torch_backend.py` | `embed_*` 函数 |
 | 调试执行轨迹 | `src/transturing/core/isa.py` → `compare_traces()` | 逐步对比 |
-| 添加结构化控制流 | `src/transturing/core/assembler.py` | WASM 风格 block/loop/if/br |
+| 添加结构化控制流 | `src/transturing/core/wasm_binary.py` | WASM 风格 block/loop/if/br（内部 lowering） |
 
 
 当前仓库记录的 WebAssembly 支持范围只覆盖已验证的 i32 子集。贡献涉及导入路径时，请把二进制 `.wasm` 主路径描述清楚，不要为当前仓库补写不存在的文本入口或调试工作流。

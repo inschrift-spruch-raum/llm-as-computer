@@ -150,7 +150,9 @@ So why would anyone want this? Because:
 
 The naive version is slower than a regular interpreter. The structured version (with convex hull search) scales to millions of steps on a CPU. The important thing isn't speed — it's that the execution lives inside the attention mechanism, making it composable with everything else transformers do.
 
-## Try it yourself
+## Internal demo: try the execution model yourself
+
+The snippet below is an **internal/research-oriented demonstration** of the execution model. It intentionally constructs `Instruction` objects directly so you can see the attention-based runtime in the smallest possible form. If you want the **supported user-facing path**, follow the `.wasm` bytes workflow from the project README and `docs/quickstart.md` instead.
 
 ```python
 from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT

@@ -6,6 +6,17 @@
 
 ---
 
+## 0.2.0 — executor-only WASM contract reset ⚠️ Breaking
+
+**核心变更：** 对外产品定义收缩为“执行受支持的 WASM32 二进制输入的 transformer 运行时”。这是一次破坏性契约重置。
+
+- 包元数据和发布信号现在明确对齐到 executor-only WASM runtime 边界；版本提升到 `0.2.0` 以显式标记这次不保留旧 compile/toolchain 契约兼容性的收缩
+- 顶层文档不再把 private ISA authoring 描述为公开产品工作流
+- source-language compilation、C toolchain 叙事、以及 compile/toolchain API 兼容承诺都被明确排除在支持范围外
+- 55 操作码执行表示保留为内部实现和研究材料，不再作为顶层产品承诺
+
+---
+
 ## Phase 20 — i32 溢出掩码（WASM 语义） ✅
 
 **核心变更：** 所有算术操作码（ADD、SUB、MUL、DIV、REM、NEG）现在统一应用 WASM 标准的 i32 溢出语义：`result = result & 0xFFFFFFFF`。

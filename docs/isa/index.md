@@ -4,7 +4,7 @@
 
 ## 概述
 
-这套 ISA 驱动着整个"transformer 即计算机"系统。更准确地说：**所有指令类型的分发/执行机制**被解析式固定到执行器结构中，而具体程序则以 ISA 指令序列的形式输入执行器，而不是每个程序都单独编译成一套新的模型参数。前馈层负责指令分发，注意力头则通过抛物线键编码 (parabolic key encoding) 完成内存寻址。每一步执行本质上就是一次 dot product 加一次 argmax，跟标准 transformer 推理中的注意力机制完全一致。
+这套 ISA 驱动着整个"transformer 即计算机"系统。更准确地说：**所有指令类型的分发/执行机制**被解析式固定到执行器结构中；而这套 ISA 在当前仓库里应理解为**运行时内部执行表示与研究材料**，不是当前对外主打的程序输入契约。面向使用者的支持路径仍然是“受支持的 `.wasm` bytes → runtime backend → trace/result”；这些 `.wasm` 模块会先进入保留的 bytes ingestion 路径，再 lower 成这里描述的内部 ISA 形式。前馈层负责指令分发，注意力头则通过抛物线键编码 (parabolic key encoding) 完成内存寻址。每一步执行本质上就是一次 dot product 加一次 argmax，跟标准 transformer 推理中的注意力机制完全一致。
 
 ### 栈机器架构
 

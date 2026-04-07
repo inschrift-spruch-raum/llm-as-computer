@@ -1,10 +1,9 @@
 # ruff: noqa: D103, PLR2004
-"""Tests for the minimal binary WASM frontend."""
+"""Tests for the retained binary WASM runtime ingestion path."""
 
 from __future__ import annotations
 
 import importlib
-import sys
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -467,31 +466,6 @@ def _binary_param_call_module() -> bytes:
     return _module(type_section, function_section, export_section, code_section)
 
 
-def _binary_entry_param_call_module() -> bytes:
-    type_section = _section(1, _vec([_func_type([0x7F], [])]))
-    function_section = _section(3, _vec([_uleb(0), _uleb(0)]))
-    export_section = _section(7, _vec([_export("main", 0x00, 1)]))
-    helper_body = _code_entry(
-        [],
-        [
-            b"\x20" + _uleb(0),
-            b"\x20" + _uleb(0),
-            b"\x6a",
-        ],
-    )
-    main_body = _code_entry(
-        [],
-        [
-            b"\x20" + _uleb(0),
-            b"\x10" + _uleb(0),
-            b"\x41" + _sleb32(5),
-            b"\x6a",
-        ],
-    )
-    code_section = _section(10, _vec([helper_body, main_body]))
-    return _module(type_section, function_section, export_section, code_section)
-
-
 def _run_binary_program(
     wasm_bytes: bytes,
     *,
@@ -844,9 +818,6 @@ def test_parse_wasm_binary_allows_custom_sections_with_payload() -> None:
 compile_wasm_function = _wasm_binary.compile_wasm_function
 compile_wasm = _wasm_binary.compile_wasm
 compile_wasm_module = _wasm_binary.compile_wasm_module
-_c_pipeline = importlib.import_module("transturing.core.c_pipeline")
-compile_c = _c_pipeline.compile_c
-compile_and_run = _c_pipeline.compile_and_run
 
 
 def test_compile_wasm_function_produces_flat_instructions() -> None:
@@ -917,98 +888,6 @@ def test_compile_wasm_module_no_funcs_raises() -> None:
         compile_wasm_module(_module(type_section))
 
 
-def test_compile_c_uses_binary_wasm_handoff() -> None:
-    wasm_bytes = _binary_locals_module()
-
-    with (
-        patch.object(
-            _c_pipeline, "compile_c_to_wasm", return_value=wasm_bytes
-        ) as to_wasm,
-        patch.object(_c_pipeline, "compile_wasm", wraps=compile_wasm) as binary_compile,
-    ):
-        flat = compile_c("int ignored(void) { return 0; }", func_name="main")
-
-    to_wasm.assert_called_once()
-    binary_compile.assert_called_once_with(wasm_bytes, func_name="main")
-    assert flat[-1].op == OP_HALT
-
-
-def test_compile_c_uses_supported_binary_path_without_extra_tools() -> None:
-    wasm_bytes = _binary_locals_module()
-
-    with (
-        patch.object(_c_pipeline, "compile_c_to_wasm", return_value=wasm_bytes),
-        patch.object(
-            _c_pipeline,
-            "_check_toolchain",
-            return_value={"clang": "clang"},
-        ),
-    ):
-        flat = compile_c("int ignored(void) { return 0; }", func_name="main")
-
-    assert flat
-    assert flat[-1].op == OP_HALT
-
-
-def test_c_pipeline_imports_without_eager_deleted_text_frontend_dependency() -> None:
-    removed_frontend_module = "transturing.core." + "wa" + "t_parser"
-
-    with patch.dict(
-        sys.modules,
-        {removed_frontend_module: None},
-    ):
-        module = importlib.reload(_c_pipeline)
-
-        try:
-            with patch.object(
-                module, "compile_c_to_wasm", return_value=_sample_module()
-            ):
-                flat = module.compile_c(
-                    "int ignored(void) { return 0; }", func_name="main"
-                )
-        finally:
-            importlib.reload(module)
-
-    assert flat
-    assert flat[-1].op == OP_HALT
-
-
-def test_compile_and_run_uses_supported_binary_path() -> None:
-    wasm_bytes = _binary_locals_module()
-
-    with (
-        patch.object(_c_pipeline, "compile_c_to_wasm", return_value=wasm_bytes),
-        patch.object(
-            _c_pipeline,
-            "_check_toolchain",
-            return_value={"clang": "clang"},
-        ),
-    ):
-        result = compile_and_run(
-            "int ignored(int n) { return n; }", [9], func_name="main"
-        )
-
-    assert result == 14
-
-
-def test_compile_and_run_rebases_prefixed_args_for_absolute_calls() -> None:
-    wasm_bytes = _binary_entry_param_call_module()
-
-    with (
-        patch.object(_c_pipeline, "compile_c_to_wasm", return_value=wasm_bytes),
-        patch.object(
-            _c_pipeline,
-            "_check_toolchain",
-            return_value={"clang": "clang"},
-        ),
-    ):
-        result = compile_and_run(
-            "int ignored(int n) { return helper(n); }", [6], func_name="main"
-        )
-
-    assert result == 17
-
-
 def test_compile_wasm_function_no_params_no_locals() -> None:
     module = parse_wasm_binary(_sample_module())
 
@@ -1021,8 +900,7 @@ def test_compile_wasm_function_no_params_no_locals() -> None:
 
 # ─── Adapter parity + rejection tests ────────────────────────────────
 
-_assembler = importlib.import_module("transturing.core.assembler")
-compile_structured = _assembler.compile_structured
+compile_structured = _wasm_binary.compile_structured_wasm_body
 
 _isa = importlib.import_module("transturing.core.isa")
 WasmFunction = _wasm_binary.WasmFunction

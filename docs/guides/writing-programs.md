@@ -1,291 +1,79 @@
 # 程序编写指南
 
-本文介绍如何为 transturing 执行器编写程序。涵盖三种方式: 直接构造指令列表、使用结构化汇编器、以及导入二进制 `.wasm` 模块。
+本文面向**当前对外支持的使用方式**：准备一个受支持的 `.wasm` 二进制模块，把它交给 transturing 的运行时后端执行，并读取 trace/result。
 
-如果你的起点是 WebAssembly 文件, 当前主路径是直接走 `.wasm -> compile_wasm() -> 既有 lowering -> ISA`。这里提到的 WebAssembly 支持范围只限于当前已验证的 i32 子集。
+> **边界提醒：** 55 操作码 ISA、`Instruction` 列表、结构化 lowering helper、以及 `programs.py` 里的生成器都属于内部实现/研究材料，不是当前顶层产品契约。真正面向用户的故事线只有一条：**supported WASM32 bytes in, runtime trace/result out**。
 
-关于执行器内部如何运行这些程序 (注意力头、抛物线编码等), 请参考 [工作原理](how-it-works.md)。完整的 55 个操作码定义见 [ISA 参考](../isa/index.md)。
+这里提到的 WebAssembly 支持范围只限于当前已验证的 i32 子集。关于执行器内部如何运行这些程序 (注意力头、抛物线编码等), 请参考 [工作原理](how-it-works.md)。完整的 55 个操作码定义见 [ISA 参考](../isa/index.md)。
 
 ## 基本概念
 
-执行器是一个栈机 (stack machine), 指令序列由 `Instruction` 对象组成。每个 `Instruction` 有操作码和参数两个字段:
+运行时执行时内部会维护以下状态:
 
-```python
-from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
+- **栈** (stack)
+- **局部变量** (locals)
+- **堆内存** (heap)
+- **调用帧** (call stack)
 
-instr = Instruction(OP_PUSH, 42)   # 操作码=1, 参数=42
-```
-
-程序执行时维护以下状态:
-
-- **栈** (stack): PUSH 压入, ADD/SUB 等弹出操作数并压入结果
-- **局部变量** (locals): LOCAL.GET/SET/TEE 按索引读写
-- **堆内存** (heap): I32.LOAD/STORE 按地址读写
-- **调用栈** (call stack): CALL/RETURN 管理函数调用
-
-程序必须以 `HALT` 结束。执行到 HALT 时, 栈顶值即为程序结果。
+这些结构会在 trace 中体现出来，但对外你不需要手写它们；你只需要提供受支持的 `.wasm` bytes。
 
 ---
 
-## 方式一: 直接构造指令
+## 推荐路径：执行二进制 `.wasm`
 
-最直接的方式是手写 `Instruction` 列表。适合简单程序和学习 ISA。
-
-### 示例 1: 基本算术 (3 + 5)
-
-```python
-from transturing.core.isa import Instruction, OP_PUSH, OP_ADD, OP_HALT
-from transturing.backends.numpy_backend import NumPyExecutor
-
-prog = [
-    Instruction(OP_PUSH, 3),    # 栈: [3]
-    Instruction(OP_PUSH, 5),    # 栈: [3, 5]
-    Instruction(OP_ADD),        # 弹出 5 和 3, 压入 8; 栈: [8]
-    Instruction(OP_HALT),       # 结果: 8
-]
-
-trace = NumPyExecutor().execute(prog)
-print(trace.steps[-1].top)      # 输出: 8
-```
-
-执行过程: PUSH 3 压入 3, PUSH 5 压入 5, ADD 弹出两个值相加得 8, HALT 返回栈顶 8。
-
-### 示例 2: 循环倒数 (用 JNZ 反复减 1)
-
-```python
-from transturing.core.isa import Instruction, OP_PUSH, OP_DUP, OP_SUB, OP_JNZ, OP_HALT
-from transturing.backends.numpy_backend import NumPyExecutor
-
-# 从 3 倒数到 0: 3 -> 2 -> 1 -> 0
-prog = [
-    Instruction(OP_PUSH, 3),    # 0: 栈: [3]
-    # -- 循环入口 (addr 1) --
-    Instruction(OP_DUP),        # 1: 复制栈顶; 栈: [3, 3]
-    Instruction(OP_PUSH, 1),    # 2: 栈: [3, 3, 1]
-    Instruction(OP_SUB),        # 3: 3 - 1 = 2; 栈: [3, 2]
-    Instruction(OP_DUP),        # 4: 栈: [3, 2, 2]
-    Instruction(OP_JNZ, 1),     # 5: 2 != 0 → 跳回 addr 1
-    Instruction(OP_HALT),       # 6: 栈顶 = 0
-]
-
-trace = NumPyExecutor().execute(prog)
-print(trace.steps[-1].top)      # 输出: 0
-```
-
-循环逻辑: DUP 复制当前值用于减法, SUB 减 1 后 DUP 再次复制用于 JNZ 判断。JNZ 弹出条件值, 非 0 则跳转到指定地址。当值减到 0 时, JNZ 不跳转, 落到 HALT。
-
-也可以用 `isa.program()` 辅助函数代替手动创建 `Instruction` 对象:
-
-```python
-from transturing.core.isa import program
-
-prog = program(
-    ("PUSH", 3),
-    ("PUSH", 5),
-    ("ADD",),
-    ("HALT",),
-)
-```
-
-`program()` 接受可变参数, 每个参数是一个元组, 元组第一个元素是操作码名称字符串。它会自动查找对应的操作码常量。
-
----
-
-## 方式二: 结构化汇编器
-
-直接用地址跳转容易出错。`assembler.py` 提供了 WASM 风格的结构化控制流, 编译器自动计算跳转目标:
-
-```python
-from transturing.core.assembler import compile_structured
-from transturing.backends.numpy_backend import NumPyExecutor
-```
-
-支持的结构化指令:
-
-| 指令 | 作用 |
-|------|------|
-| `('BLOCK',)` | 代码块, BR 退出到 END |
-| `('LOOP',)` | 循环块, BR 跳回开头 |
-| `('IF',)` / `('ELSE',)` / `('END',)` | 条件分支 |
-| `('BR', n)` | 无条件跳出 n 层 |
-| `('BR_IF', n)` | 条件跳出 n 层 |
-| `('BR_TABLE', labels, default)` | switch 分支 |
-
-非控制流指令直接透传给底层, 格式与 `program()` 相同。
-
-### 示例 3: 用汇编器写倒数循环
-
-```python
-from transturing.core.assembler import compile_structured
-from transturing.backends.numpy_backend import NumPyExecutor
-
-prog = compile_structured([
-    ('PUSH', 5),          # 初始值
-    ('LOOP',),            # 循环起点
-      ('PUSH', 1),        #
-      ('SUB',),           # 减 1
-      ('DUP',),           # 复制用于判断
-      ('BR_IF', 0),       # 栈顶非 0 → 跳回 LOOP 起点
-    ('END',),
-    ('HALT',),
-])
-
-trace = NumPyExecutor().execute(prog)
-print(trace.steps[-1].top)  # 输出: 0
-```
-
-关键区别: `BR_IF 0` 表示跳出 0 层 (即最内层) 循环块。对于 LOOP, BR/BR_IF 跳回循环开头; 对于 BLOCK, BR/BR_IF 跳到块末尾。
-
-### 示例 4: 带函数调用的阶乘
-
-CALL/RETURN 支持递归函数调用。下面是使用 LOCAL 变量和 CALL 的阶乘:
-
-```python
-from transturing.core.isa import Instruction, OP_PUSH, OP_DUP, OP_JZ, OP_SUB, OP_MUL
-from transturing.core.isa import OP_LOCAL_SET, OP_LOCAL_GET, OP_CALL, OP_RETURN, OP_HALT
-from transturing.backends.numpy_backend import NumPyExecutor
-
-# 阶乘: fact(5) = 120
-# 使用迭代循环 + LOCAL 变量
-prog = [
-    Instruction(OP_PUSH, 1),        # 0: result = 1
-    Instruction(OP_PUSH, 5),        # 1: counter = 5
-    # -- 循环 (addr 2) --
-    Instruction(OP_DUP),            # 2: 复制 counter
-    Instruction(OP_JZ, 12),         # 3: counter == 0 → 结束
-    Instruction(OP_DUP),            # 4
-    Instruction(OP_PUSH, 1),        # 5
-    Instruction(OP_SUB),            # 6: counter - 1
-    # result *= (counter - 1 + 1) = counter
-    # 用 ROT 把 result 拿到栈顶
-    # 交换位置: [result, counter] → 计算 result * counter
-    # 这里简化为: ROT; MUL; SWAP; SUB; 循环
-    # 实际 programs.py 中的 make_factorial 有完整实现
-    Instruction(OP_HALT),           # 7 (简化版)
-]
-
-# 推荐直接使用 make_factorial 生成器:
-from transturing.core.programs import make_factorial
-prog, expected = make_factorial(5)  # expected = 120
-
-trace = NumPyExecutor().execute(prog)
-print(trace.steps[-1].top)          # 输出: 120
-```
-
-对于递归阶乘, 可以用 CALL/RETURN 实现:
-
-```python
-from transturing.core.isa import Instruction
-from transturing.core.isa import OP_PUSH, OP_CALL, OP_RETURN, OP_HALT, OP_LOCAL_GET
-from transturing.core.isa import OP_LOCAL_SET, OP_SUB, OP_MUL, OP_DUP, OP_NOP
-from transturing.backends.numpy_backend import NumPyExecutor
-
-# 递归 fact(n): n <= 1 返回 1, 否则 n * fact(n-1)
-prog = [
-    # -- main --
-    Instruction(OP_PUSH, 5),        # 0: 参数 n=5
-    Instruction(OP_CALL, 3),        # 1: 调用 fact
-    Instruction(OP_HALT),           # 2
-
-    # -- fact(n) 从 addr 3 开始 --
-    # 参数 n 通过栈传入, 保存到 local[0]
-    Instruction(OP_LOCAL_SET, 0),   # 3: local[0] = n
-    Instruction(OP_LOCAL_GET, 0),   # 4: push n
-    Instruction(OP_PUSH, 1),        # 5
-    Instruction(OP_SUB),            # 6: n - 1
-    Instruction(OP_DUP),            # 7: 复制用于判断
-    # 这里简化展示; 完整实现需要 LT_S 或条件跳转
-    # 实际完整版见 programs.py 中的 make_factorial()
-    Instruction(OP_RETURN),         # 8
-]
-
-trace = NumPyExecutor().execute(prog)
-```
-
-完整可运行的递归实现较长, 因为需要处理基本情况 (n<=1) 和两次递归调用。项目中有现成的 `make_factorial()` 生成器, 使用 MUL + 循环实现, 推荐优先使用。
-
-### 示例 5: 冒泡排序 (堆内存)
-
-I32.LOAD 和 I32.STORE 操作堆内存。下面的程序对数组 `[3, 1, 2]` 排序, 结果 `[1, 2, 3]`:
-
-```python
-from transturing.core.isa import Instruction
-from transturing.core.isa import (OP_PUSH, OP_HALT, OP_ADD, OP_SUB, OP_DUP, OP_JZ, OP_JNZ,
-                 OP_LOCAL_SET, OP_LOCAL_GET,
-                 OP_I32_LOAD, OP_I32_STORE, OP_GT_S)
-from transturing.backends.numpy_backend import NumPyExecutor
-
-# 对 [3, 1, 2] 冒泡排序, 读 mem[0] 应得到 1
-prog = [
-    # 初始化内存: addr=0→3, addr=1→1, addr=2→2
-    Instruction(OP_PUSH, 0), Instruction(OP_PUSH, 3), Instruction(OP_I32_STORE),
-    Instruction(OP_PUSH, 1), Instruction(OP_PUSH, 1), Instruction(OP_I32_STORE),
-    Instruction(OP_PUSH, 2), Instruction(OP_PUSH, 2), Instruction(OP_I32_STORE),
-
-    # LOCAL[0] = pass (外层), LOCAL[1] = j (内层)
-    # LOCAL[2] = mem[j], LOCAL[3] = mem[j+1]
-    Instruction(OP_PUSH, 0),
-    Instruction(OP_LOCAL_SET, 0),      # pass = 0
-    # ... 外层和内层循环省略 (完整版 62 条指令)
-    # 完整版见 programs.py 中的 make_bubble_sort()
-
-    # 结果: 读 mem[0]
-    Instruction(OP_PUSH, 0),
-    Instruction(OP_I32_LOAD),
-    Instruction(OP_HALT),
-]
-
-# 推荐直接用测试中的完整版本
-```
-
-冒泡排序完整版约 62 条指令。核心思路:
-
-1. `I32.STORE` 写入: 栈顶是地址, 下面是值。`PUSH addr; PUSH val; I32.STORE`
-2. `I32.LOAD` 读取: 栈顶是地址。`PUSH addr; I32.LOAD` 把值压栈
-3. 用 LOCAL 变量暂存 mem[j] 和 mem[j+1], 避免栈操作混乱
-
----
-
-## 方式三: 导入二进制 `.wasm`
-
-如果你的程序已经来自 C 编译器或其他 WebAssembly 工具链, 推荐直接导入二进制 `.wasm` 模块。当前公开 API 暴露了二进制解析和编译入口:
+如果你的程序已经是一个 WebAssembly 模块，当前支持的使用方式就是直接导入二进制 `.wasm` 并交给后端执行。
 
 ```python
 from pathlib import Path
 
-from transturing import compile_wasm, parse_wasm_binary, parse_wasm_file
-from transturing.backends.numpy_backend import NumPyExecutor
+from transturing import get_executor
+from transturing.core.wasm_binary import compile_wasm_module
 ```
 
 ### 基本用法
 
 ```python
 wasm_bytes = Path("add.wasm").read_bytes()
-prog = compile_wasm(wasm_bytes, func_name="add")
+executor = get_executor("numpy")
+prog = compile_wasm_module(wasm_bytes, func_name="add")
 
-trace = NumPyExecutor().execute(prog)
+trace = executor.execute(prog)
 print(trace.steps[-1].top)
 ```
 
-### 检查模块结构
+### 可选：先检查模块结构
 
-如果你需要先查看导出的函数、内存或函数体结构, 可以先解析模块再选择入口函数:
+如果你需要先查看导出的函数或内存信息，可以先解析模块，再选择入口函数：
 
 ```python
+from transturing.core.wasm_binary import parse_wasm_file
+
 module = parse_wasm_file("add.wasm")
 print([export.name for export in module.exports])
 
-same_module = parse_wasm_binary(Path("add.wasm").read_bytes())
-prog = compile_wasm(same_module, func_name="add")
+prog = compile_wasm_module(Path("add.wasm").read_bytes(), func_name="add")
 ```
 
-这些入口都面向当前已验证的 i32 子集。binary frontend 会把 `.wasm` 模块解码为内部 Wasm 指令表示, 然后复用同一套结构化控制流映射与 ISA lowering 语义。
+这些 helper 都只面向当前已验证的 i32 子集。作为使用者，你只需要把它们理解为“运行时接受受支持 `.wasm` bytes 的入口”；不需要把内部执行表示当成公开 authoring 工作流。
 
 ---
 
-## 使用程序生成器
+## 内部实现/研究补充
 
-`programs.py` 提供了一系列 `make_*` 函数, 自动生成常见算法的指令序列:
+下面这些材料保留给研究者和维护者：
+
+- 直接构造 `Instruction` 列表
+- 结构化控制流 helper
+- `programs.py` 中的 `make_*` 生成器
+- `compare_traces()` 驱动的双后端一致性测试模式
+
+它们仍然有助于理解执行器内部如何工作，但**不是当前建议给用户的入口**。
+
+> **不要把下面内容当成第二条公开工作流。** 从这一节开始，示例都会进入内部表示、测试工具和研究型 helper。它们的目的，是帮助你理解仓库如何验证与解释运行时；如果你的目标是使用当前支持的产品边界，请停留在上面的 `.wasm` bytes 路径。
+
+## 内部示例：使用程序生成器
+
+`programs.py` 提供了一系列 `make_*` 函数, 自动生成常见算法的**内部指令序列**。这套入口主要服务于测试、回归和研究讨论:
 
 ```python
 from transturing.core.programs import make_fibonacci, make_factorial, make_gcd, make_multiply
@@ -310,11 +98,11 @@ prog, expected = make_multiply(7, 8)
 
 ---
 
-## 测试程序
+## 内部验证模式
 
 ### 用 compare_traces() 验证
 
-`isa.py` 提供了 `compare_traces()` 函数, 对比两次执行的每一步是否完全一致。这是项目中最核心的验证方式: NumPy 执行器和 PyTorch 执行器必须产生完全相同的 trace。
+`isa.py` 提供了 `compare_traces()` 函数, 对比两次执行的每一步是否完全一致。这是项目中最核心的**内部验证方式**: NumPy 执行器和 PyTorch 执行器必须产生完全相同的 trace。这里展示的是维护者/研究者工作流, 不是当前对外支持的主使用方式。
 
 ```python
 from transturing.core.isa import compare_traces
@@ -335,7 +123,7 @@ assert np_trace.steps[-1].top == expected
 assert pt_trace.steps[-1].top == expected
 ```
 
-### 查看执行跟踪
+### 查看执行跟踪（内部调试）
 
 `trace.format_trace()` 输出每一步的详细状态:
 
@@ -346,9 +134,9 @@ print(trace.format_trace())
 
 输出包含每条指令执行后的 IP、操作码、栈内容、局部变量等信息。
 
-### 常用测试模式
+### 常用测试模式（内部）
 
-项目中的测试遵循固定模式:
+项目中的测试遵循固定模式。下面的例子用于说明仓库内部如何验证执行器一致性, 不应理解为公开产品鼓励用户直接手写 `Instruction`:
 
 ```python
 from transturing.core.isa import Instruction, compare_traces
@@ -382,9 +170,9 @@ def test_my_program():
 
 ---
 
-## i32 溢出语义
+## i32 溢出语义（内部表示补充）
 
-所有算术运算遵循 WASM 的 i32 溢出规则: 结果会与 `0xFFFFFFFF` 做按位与。例如 `0xFFFFFFFF + 1 = 0`。除以零会触发 TRAP (操作码 99), 不是 Python 异常。
+所有算术运算遵循 WASM 的 i32 溢出规则: 结果会与 `0xFFFFFFFF` 做按位与。例如 `0xFFFFFFFF + 1 = 0`。除以零会触发 TRAP (操作码 99), 不是 Python 异常。下面的例子继续沿用内部 `Instruction` 表示, 只是为了说明语义如何在运行时内部落地。
 
 ```python
 # 溢出示例
@@ -410,4 +198,4 @@ print(trace.steps[-1].top)    # 输出: 0 (不是 0x100000000)
 - [ISA 参考](../isa/index.md): 完整的 55 个操作码分类索引
 - [操作码详解](../isa/opcodes.md): 每个操作码的语义和参数说明
 - [架构概览](../architecture/overview.md): 系统设计和关键概念
-- [项目 README](../../README.md): 项目总览和文件结构
+- [项目 README](../../README.md): 项目总览和 `.wasm` bytes 执行主线

@@ -1,14 +1,14 @@
 [project]
 name = "transturing"
-version = "0.1.0"
-description = "Compiled transformer executor — programs run inside a transformer's own inference loop. Each instruction fetch and memory read is a parabolic attention head."
+version = "0.2.0"
+description = "Executor-only transformer runtime for supported WASM32 bytes, returning runtime traces/results from execution inside the transformer's own inference loop."
 readme = "README.md"
 requires-python = ">=3.14"
 authors = [
     { name = "Oskar Austegard" },
     { name = "Inschrift.Spruch.Raum" },
 ]
-keywords = ["transformer", "attention", "interpreter", "wasm", "compiled-execution"]
+keywords = ["transformer", "attention", "runtime", "wasm32", "execution-trace"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

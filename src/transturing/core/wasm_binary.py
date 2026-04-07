@@ -1,10 +1,11 @@
 # ruff: noqa: C901, EM101, EM102, PLR0912, PLR0915, PLR2004, TC003, TRY003, UP047
 """
-Binary WebAssembly decoder for the supported i32 subset.
+Runtime-owned WebAssembly bytes ingestion for the supported i32 subset.
 
-This module decodes a tightly scoped subset of MVP WebAssembly binaries into
-structured module/function data. Function bodies are emitted as existing
-``WasmInstr`` tuples so they can later flow into ``compile_structured()``.
+This module accepts a tightly scoped subset of MVP WebAssembly binaries and
+turns them into structured module/function data that the runtime can execute.
+Function bodies are emitted as existing ``WasmInstr`` tuples so they can flow
+into the runtime's internal structured lowering path.
 
 Supported pieces:
   - module header/version
@@ -29,8 +30,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
-from .assembler import compile_structured
-from .isa import OP_CALL, OP_HALT, OP_JNZ, OP_JZ, OP_RETURN, Instruction, WasmInstr
+from .isa import (
+    OP_CALL,
+    OP_DUP,
+    OP_EQ,
+    OP_HALT,
+    OP_JNZ,
+    OP_JZ,
+    OP_POP,
+    OP_PUSH,
+    OP_RETURN,
+    Instruction,
+    WasmInstr,
+)
 from .isa import program as _make_prog
 
 _WASM_MAGIC = b"\x00asm"
@@ -246,6 +258,8 @@ _BOILERPLATE_EXPORTS = frozenset(
 )
 
 _ItemT = TypeVar("_ItemT")
+_BR_ARGS_LEN = 2
+_BR_TABLE_ARGS_LEN = 3
 
 
 class WasmBinaryDecodeError(ValueError):
@@ -388,6 +402,153 @@ class _Reader:
     def skip_remaining(self) -> None:
         """Consume any unread bytes in the current reader scope."""
         self.pos = len(self.data)
+
+
+class _StructuredControlFlowLowerer:
+    """Stateful lowerer for BLOCK/LOOP/IF/BR-style control flow."""
+
+    def __init__(self) -> None:
+        self.flat: list[Instruction] = []
+        self.lbl_stack: list[dict[str, int | str]] = []
+        self.pending: dict[int, list[int]] = {}
+        self._nxt = 0
+
+    def _alloc(self) -> int:
+        lbl = self._nxt
+        self._nxt += 1
+        self.pending[lbl] = []
+        return lbl
+
+    def _resolve(self, lbl: int) -> None:
+        addr = len(self.flat)
+        for idx in self.pending.pop(lbl):
+            self.flat[idx] = Instruction(self.flat[idx].op, addr)
+
+    def _jcc_fwd(self, op: int, lbl: int) -> None:
+        self.flat.append(Instruction(op, 0))
+        self.pending[lbl].append(len(self.flat) - 1)
+
+    def _jump_fwd(self, lbl: int) -> None:
+        self.flat.append(Instruction(OP_PUSH, 1))
+        self.flat.append(Instruction(OP_JNZ, 0))
+        self.pending[lbl].append(len(self.flat) - 1)
+
+    def _jump_addr(self, addr: int) -> None:
+        self.flat.append(Instruction(OP_PUSH, 1))
+        self.flat.append(Instruction(OP_JNZ, addr))
+
+    def _blk(self, depth: int) -> dict[str, int | str]:
+        idx = len(self.lbl_stack) - 1 - depth
+        if idx < 0:
+            msg = (
+                f"BR/BR_IF/BR_TABLE depth {depth} exceeds label stack depth "
+                f"{len(self.lbl_stack)}"
+            )
+            raise ValueError(msg)
+        return self.lbl_stack[idx]
+
+    def _jump_to_blk(self, blk: dict[str, int | str]) -> None:
+        if blk["kind"] == "loop":
+            self._jump_addr(int(blk["start"]))
+        else:
+            self._jump_fwd(int(blk["end"]))
+
+    def _jcc_to_blk(self, op: int, blk: dict[str, int | str]) -> None:
+        if blk["kind"] == "loop":
+            self.flat.append(Instruction(op, int(blk["start"])))
+        else:
+            self._jcc_fwd(op, int(blk["end"]))
+
+    def _handle_block(self) -> None:
+        self.lbl_stack.append({"kind": "block", "end": self._alloc()})
+
+    def _handle_loop(self) -> None:
+        self.lbl_stack.append(
+            {"kind": "loop", "start": len(self.flat), "end": self._alloc()}
+        )
+
+    def _handle_if(self) -> None:
+        else_lbl, end_lbl = self._alloc(), self._alloc()
+        self._jcc_fwd(OP_JZ, else_lbl)
+        self.lbl_stack.append({"kind": "if", "else": else_lbl, "end": end_lbl})
+
+    def _handle_else(self) -> None:
+        blk = self.lbl_stack[-1]
+        if blk["kind"] != "if":
+            msg = f"ELSE without matching IF (found {blk['kind']!r})"
+            raise ValueError(msg)
+        self._jump_fwd(int(blk["end"]))
+        self._resolve(int(blk["else"]))
+
+    def _handle_end(self) -> None:
+        blk = self.lbl_stack.pop()
+        if blk["kind"] == "if" and int(blk["else"]) in self.pending:
+            self._resolve(int(blk["else"]))
+        self._resolve(int(blk["end"]))
+
+    def _handle_br(self, raw: WasmInstr) -> None:
+        if len(raw) != _BR_ARGS_LEN:
+            msg = f"BR requires (name, depth), got {len(raw)} elements"
+            raise ValueError(msg)
+        self._jump_to_blk(self._blk(raw[1]))
+
+    def _handle_br_if(self, raw: WasmInstr) -> None:
+        if len(raw) != _BR_ARGS_LEN:
+            msg = f"BR_IF requires (name, depth), got {len(raw)} elements"
+            raise ValueError(msg)
+        self._jcc_to_blk(OP_JNZ, self._blk(raw[1]))
+
+    def _handle_br_table(self, raw: WasmInstr) -> None:
+        if len(raw) != _BR_TABLE_ARGS_LEN:
+            msg = f"BR_TABLE requires (name, labels, default), got {len(raw)} elements"
+            raise ValueError(msg)
+        labels = raw[1]
+        default_depth = raw[2]
+        handler_lbls = [self._alloc() for _ in range(len(labels))]
+
+        for idx, handler_lbl in enumerate(handler_lbls):
+            self.flat.append(Instruction(OP_DUP, 0))
+            self.flat.append(Instruction(OP_PUSH, idx))
+            self.flat.append(Instruction(OP_EQ, 0))
+            self._jcc_fwd(OP_JNZ, handler_lbl)
+
+        self.flat.append(Instruction(OP_POP, 0))
+        self._jump_to_blk(self._blk(default_depth))
+
+        for depth, handler_lbl in zip(labels, handler_lbls, strict=False):
+            self._resolve(handler_lbl)
+            self.flat.append(Instruction(OP_POP, 0))
+            self._jump_to_blk(self._blk(depth))
+
+    def compile(self, wasm_instrs: list[WasmInstr]) -> list[Instruction]:
+        for raw in wasm_instrs:
+            name = raw[0].upper()
+
+            if name == "BLOCK":
+                self._handle_block()
+            elif name == "LOOP":
+                self._handle_loop()
+            elif name == "IF":
+                self._handle_if()
+            elif name == "ELSE":
+                self._handle_else()
+            elif name == "END":
+                self._handle_end()
+            elif name == "BR":
+                self._handle_br(raw)
+            elif name == "BR_IF":
+                self._handle_br_if(raw)
+            elif name == "BR_TABLE":
+                self._handle_br_table(raw)
+            else:
+                self.flat.extend(_make_prog(raw))
+
+        return self.flat
+
+
+def compile_structured_wasm_body(wasm_instrs: list[WasmInstr]) -> list[Instruction]:
+    """Lower structured WASM-style instructions to flat ISA instructions."""
+    return _StructuredControlFlowLowerer().compile(wasm_instrs)
 
 
 def _expect_fully_consumed(reader: _Reader, *, where: str) -> None:
@@ -802,7 +963,7 @@ def parse_wasm_file(path: str | Path) -> WasmBinaryModule:
     return parse_wasm_binary(wasm_path.read_bytes())
 
 
-# ─── Binary-to-ISA adapter ─────────────────────────────────────────
+# ─── Runtime ingestion → executable ISA helpers ────────────────────
 
 
 def _has_structured_cf(body: list[WasmInstr]) -> bool:
@@ -853,10 +1014,10 @@ def _auto_detect_function(module: WasmBinaryModule) -> WasmFunction:
 
 
 def _lower_wasm_body(func: WasmFunction) -> list[Instruction]:
-    """Lower a decoded WASM body without adding setup or termination."""
+    """Lower a decoded WASM body into executable ISA without wrappers."""
     try:
         if _has_structured_cf(func.body):
-            return compile_structured(func.body)
+            return compile_structured_wasm_body(func.body)
         return _make_prog(*func.body) if func.body else []
     except KeyError as exc:
         bad_name = exc.args[0] if exc.args else "<unknown>"
@@ -895,7 +1056,7 @@ def _compile_wasm_function_body(
     *,
     terminal_op: int,
 ) -> list[Instruction]:
-    """Compile one decoded function with setup and the requested terminator."""
+    """Lower one decoded function into runtime-executable ISA instructions."""
     lowered = _lower_wasm_body(func)
     with_setup = _with_param_local_setup(func, lowered)
     return _ensure_terminal(with_setup, terminal_op=terminal_op)
@@ -906,7 +1067,7 @@ def _compile_module_functions(
     *,
     entry_index: int,
 ) -> list[Instruction]:
-    """Link a decoded module into one runnable flat ISA program."""
+    """Link a decoded module into one flat ISA program the runtime can run."""
     order = [
         entry_index,
         *[func.index for func in module.functions if func.index != entry_index],
@@ -938,19 +1099,19 @@ def _compile_module_functions(
 
 def compile_wasm_function(func: WasmFunction) -> list[Instruction]:
     """
-    Compile a decoded WASM function to flat instructions.
+    Convert one decoded WASM function into flat runtime instructions.
 
     The returned list is consumable by both NumPyExecutor and TorchExecutor.
     Parameter locals and extra locals are set up following the same convention
-    as the existing C pipeline:
+    as the runtime's retained WASM ingestion path:
 
     1. Extra locals are initialised to zero.
     2. Arguments that were pushed on the operand stack are popped into
        parameter locals in reverse order (top-of-stack = last param).
 
     Structured control flow (BLOCK/LOOP/IF/ELSE/END/BR/BR_IF/BR_TABLE)
-    is lowered through ``compile_structured()``.  A trailing HALT is
-    appended when absent.
+    is lowered through the internal runtime path. A trailing HALT is appended
+    when absent.
     """
     return _compile_wasm_function_body(func, terminal_op=OP_HALT)
 
@@ -961,15 +1122,15 @@ def compile_wasm_module(
     func_name: str | None = None,
 ) -> list[Instruction]:
     """
-    Decode and compile a binary WASM module to flat instructions.
+    Ingest binary WASM bytes into flat instructions ready for runtime execution.
 
-    Parses the binary via ``parse_wasm_binary()``, selects the target
-    function (by export name or auto-detection), and compiles it through
-    ``compile_wasm_function()``.
+    The runtime decodes the incoming bytes via ``parse_wasm_binary()``, selects
+    the target function (by export name or auto-detection), and lowers it
+    through ``compile_wasm_function()``.
 
     Args:
-        data: Raw ``.wasm`` bytes.
-        func_name: Export name of the function to compile.  When *None* the
+        data: Raw ``.wasm`` bytes accepted by the runtime ingestion path.
+        func_name: Export name of the function to execute. When *None* the
             first non-boilerplate exported function is selected automatically.
 
     Returns:
@@ -995,7 +1156,7 @@ def compile_wasm(
     *,
     func_name: str | None = None,
 ) -> list[Instruction]:
-    """Backward-compatible alias for ``compile_wasm_module()``."""
+    """Retained alias for runtime WASM-byte ingestion via ``compile_wasm_module()``."""
     return compile_wasm_module(data, func_name=func_name)
 
 
