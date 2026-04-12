@@ -1,0 +1,45 @@
+[project]
+name = "transturing"
+version = "0.2.0"
+description = "Executor-only transformer runtime for supported WASM32 bytes, returning runtime traces/results from execution inside the transformer's own inference loop."
+readme = "README.md"
+requires-python = ">=3.14"
+authors = [
+    { name = "Oskar Austegard" },
+    { name = "Inschrift.Spruch.Raum" },
+]
+keywords = ["transformer", "attention", "runtime", "wasm32", "execution-trace"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.8",
+    "basedpyright>=1.39.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+lint.extend-select = ["ALL"]
+lint.ignore = ["COM812", "D203", "D212"]
+lint.per-file-ignores = { "tests/**/*.py" = ["S101"] }
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+exclude = ["**/.venv", "**/node_modules", "**/__pycache__", "**/.*"]
